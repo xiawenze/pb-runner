@@ -1,3 +1,9 @@
-RUNNING bot 启动中
-2026-11-03T17:55:36Z
+RUNNING pid=2247 重启=0 剩余=324min
+--- bot.log 尾 ---
+anghubot] 已上线: @xwzxxxbot (9092676255)
+[api] answerCallbackQuery fail: Bad Request: query is too old and response timeout expired or query ID is invalid
+[api] answerCallbackQuery fail: Bad Request: query is too old and response timeout expired or query ID is invalid
+[poll] 17:55:40 offset=271854531
+
+2026-11-03T18:00:37Z
 run=41688841537
