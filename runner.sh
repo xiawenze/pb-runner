@@ -37,6 +37,37 @@ log "GITHUB_TOKEN 已提取 (${#GTOKEN} 字符)"
 AUTH="Authorization: Bearer ${GTOKEN}"
 ACCEPT="Accept: application/vnd.github+json"
 gh(){ curl -sS -H "$AUTH" -H "$ACCEPT" "$@"; }
+raw(){ curl -sS -L -H "$AUTH" -H "Accept: application/octet-stream" "$@"; }
+
+# --- 单例锁: 有更早的 run 在跑/排队就退出, 防自续链指数堆叠 ---
+MINE="${GITHUB_RUN_ID:-0}"
+LOCK=$(python3 - "$API" "$GTOKEN" "$MINE" <<'PY'
+import sys, json, urllib.request
+api, tok, mine = sys.argv[1], sys.argv[2], str(sys.argv[3])
+def runs(status):
+    req = urllib.request.Request(f"{api}/actions/workflows/main.yml/runs?status={status}&per_page=30",
+                                 headers={'Authorization': 'Bearer ' + tok,
+                                          'Accept': 'application/vnd.github+json'})
+    try:
+        return json.load(urllib.request.urlopen(req, timeout=30)).get('workflow_runs', [])
+    except Exception:
+        return []
+try:
+    mine_created = next((r['created_at'] for r in runs('in_progress') + runs('queued')
+                         if str(r['id']) == mine), '')
+except Exception:
+    mine_created = ''
+if not mine_created:
+    print('0'); sys.exit()
+earlier = [r for r in runs('in_progress') + runs('queued')
+           if str(r['id']) != mine and r.get('created_at', '') < mine_created]
+print(len(earlier))
+PY
+)
+if [ "${LOCK:-0}" != "0" ]; then
+  log "已有更早的 run 在跑 (count=$LOCK)，本单退出"
+  exit 0
+fi
 
 # --- 找 draft release ---
 REL_ID=$(gh "$API/releases" | python3 -c "
@@ -62,14 +93,15 @@ print(m[0]['url'] if m else '')"; }
 # --- 拉配置与状态 ---
 CFG=$(asset_url config.env)
 if [ -z "$CFG" ]; then log "!! draft 里没有 config.env"; exit 1; fi
-gh -L -H "Accept: application/octet-stream" -o .env "$CFG"
+raw -o .env "$CFG"
 mkdir -p data
-for pair in "state.json state.json" "subs.json subs.json" "nodepool.json nodepool.json" "settings.json settings.json"; do
-  name=${pair%% *}; file=${pair##* }
+for name in state.json subs.json nodepool.json settings.json; do
   u=$(asset_url "$name")
-  [ -n "$u" ] && gh -L -H "Accept: application/octet-stream" -o "data/$file" "$u"
+  [ -n "$u" ] && raw -o "data/$name" "$u"
 done
-log "config+state 就绪 ($(wc -c < .env)B .env)"
+KEYS=$(grep -cE '^[A-Z_]+=' .env 2>/dev/null || echo 0)
+log "config+state 就绪 (.env $(wc -c < .env)B, ${KEYS} 个键)"
+if [ "$KEYS" -lt 1 ]; then log "!! .env 不像配置，可能是下载失败"; head -c 120 .env; echo; exit 1; fi
 
 # --- 跑 bot（输出实时进 Actions 日志 + bot.log） ---
 python3 -u bot.py > >(tee bot.log) 2>&1 &
