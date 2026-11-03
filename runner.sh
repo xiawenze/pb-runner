@@ -39,35 +39,37 @@ ACCEPT="Accept: application/vnd.github+json"
 gh(){ curl -sS -H "$AUTH" -H "$ACCEPT" "$@"; }
 raw(){ curl -sS -L -H "$AUTH" -H "Accept: application/octet-stream" "$@"; }
 
-# --- 单例锁: 有更早的 run 在跑/排队就退出, 防自续链指数堆叠 ---
+# --- 等位锁: 有更早的 run 在跑/排队就先等, 保证同时只有一个 bot 在轮询 ---
 MINE="${GITHUB_RUN_ID:-0}"
-LOCK=$(python3 - "$API" "$GTOKEN" "$MINE" <<'PY'
+wait_turn(){
+  local waited=0
+  while :; do
+    local n
+    n=$(python3 - "$API" "$GTOKEN" "$MINE" <<'PY'
 import sys, json, urllib.request
 api, tok, mine = sys.argv[1], sys.argv[2], str(sys.argv[3])
 def runs(status):
-    req = urllib.request.Request(f"{api}/actions/workflows/main.yml/runs?status={status}&per_page=30",
+    req = urllib.request.Request(f"{api}/actions/workflows/main.yml/runs?status={status}&per_page=50",
                                  headers={'Authorization': 'Bearer ' + tok,
                                           'Accept': 'application/vnd.github+json'})
     try:
         return json.load(urllib.request.urlopen(req, timeout=30)).get('workflow_runs', [])
     except Exception:
         return []
-try:
-    mine_created = next((r['created_at'] for r in runs('in_progress') + runs('queued')
-                         if str(r['id']) == mine), '')
-except Exception:
-    mine_created = ''
+allr = runs('in_progress') + runs('queued')
+mine_created = next((r['created_at'] for r in allr if str(r['id']) == mine), '')
 if not mine_created:
-    print('0'); sys.exit()
-earlier = [r for r in runs('in_progress') + runs('queued')
-           if str(r['id']) != mine and r.get('created_at', '') < mine_created]
-print(len(earlier))
+    print(0); sys.exit()
+print(len([r for r in allr if str(r['id']) != mine and r.get('created_at', '') < mine_created]))
 PY
 )
-if [ "${LOCK:-0}" != "0" ]; then
-  log "已有更早的 run 在跑 (count=$LOCK)，本单退出"
-  exit 0
-fi
+    [ "${n:-0}" = "0" ] && return 0
+    log "等位中 (更早的 run=$n, 已等 ${waited}s)"
+    sleep 120; waited=$((waited+120))
+    if [ "$waited" -ge 10800 ]; then log "等位超时 3h，让位退出"; return 1; fi
+  done
+}
+wait_turn || exit 0
 
 # --- 找 draft release ---
 REL_ID=$(gh "$API/releases" | python3 -c "
@@ -103,14 +105,24 @@ KEYS=$(grep -cE '^[A-Z_]+=' .env 2>/dev/null || echo 0)
 log "config+state 就绪 (.env $(wc -c < .env)B, ${KEYS} 个键)"
 if [ "$KEYS" -lt 1 ]; then log "!! .env 不像配置，可能是下载失败"; head -c 120 .env; echo; exit 1; fi
 
-# --- 跑 bot（输出实时进 Actions 日志 + bot.log） ---
-python3 -u bot.py > >(tee bot.log) 2>&1 &
-BOT=$!
-log "bot pid=$BOT, 跑 ${RUN_MIN} 分钟"
-sleep $((RUN_MIN*60))
-kill $BOT 2>/dev/null || true
+# --- 跑 bot（输出实时进 Actions 日志 + bot.log），掉了自动重启 ---
+start_bot(){ python3 -u bot.py 2>&1 | tee -a bot.log & BOT=$!; }
+start_bot
+log "bot pid=$BOT, 本轮跑 ${RUN_MIN} 分钟"
+END=$(( $(date +%s) + RUN_MIN*60 ))
+RESTARTS=0
+while [ "$(date +%s)" -lt "$END" ]; do
+  sleep 60
+  if ! kill -0 "$BOT" 2>/dev/null; then
+    RESTARTS=$((RESTARTS+1))
+    log "bot 掉了，重启 (第 $RESTARTS 次)"
+    start_bot
+    if [ "$RESTARTS" -ge 40 ]; then log "重启过多，提前收尾"; break; fi
+  fi
+done
+kill "$BOT" 2>/dev/null || true
 sleep 3
-log "bot 已停"
+log "bot 已停 (重启次数=$RESTARTS)"
 
 # --- 状态存回 draft ---
 save_asset(){
