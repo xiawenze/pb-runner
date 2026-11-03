@@ -1,3 +1,8 @@
-RUNNING bot 启动中
-2026-11-03T16:31:55Z
+RUNNING pid=2343 重启=0 剩余=324min
+--- bot.log 尾 ---
+ request; make sure that only one bot instance is running
+[api] getUpdates fail: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+[api] getUpdates fail: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+
+2026-11-03T16:36:56Z
 run=41673302614
