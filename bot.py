@@ -481,7 +481,8 @@ def update_all(chat_id):
 
 def test_alive(chat_id, url, msg_id=None, kind='l', idx=0):
     """测活: 拉节点 → TCP 快测, 播报进度"""
-    text, ui, err = subman.fetch_sub(url)
+    text, ui, meta = subman.fetch_sub(url)
+    err = meta if (text is None) else None
     if err:
         if msg_id:
             edit(chat_id, msg_id, f'❌ 拉取失败: {err}', [[btn('↩️ 返回', 'm|main')]])
