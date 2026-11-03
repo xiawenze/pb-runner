@@ -1407,9 +1407,15 @@ def main():
         except KeyboardInterrupt:
             print('[panghubot] bye', flush=True)
             break
-        except Exception:
+        except Exception as e:
+            err = str(e)
             traceback.print_exc()
-            time.sleep(5)
+            if 'Conflict' in err or '409' in err:
+                print('[api] 409 冲突, 重置 offset 重连', flush=True)
+                offset = 0  # 丢掉被污染的 offset, 重新抢轮询
+                time.sleep(3)
+            else:
+                time.sleep(5)
 
 
 if __name__ == '__main__':
