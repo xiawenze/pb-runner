@@ -1,0 +1,1416 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+panghubot — FOFA/Quake 资产搜索 + 机场订阅管理 Bot
+菜单布局与交互复刻 PANGHU bot:
+  帮助菜单|排序设置  FOFA搜索|Quake搜索  屏蔽词表|路径对应
+  收藏列表|短链管理  导出链接|更新所有  临期列表|订阅列表
+运行: python3 bot.py  (配置读同目录 .env)
+"""
+import os
+import re
+import sys
+import json
+import time
+import threading
+import traceback
+
+import requests
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+from core import subman
+from core import fofa
+from core import quake
+from core import shortlink
+from core import turnscan
+from core import gen
+from core import upload
+from core.alive import fastping
+from core.parse import parse_subscription, stats, looks_like_links, dedup, validate_nodes
+from core.fetch import extract_urls
+
+# ---------------------------------------------------------------- .env
+def load_env():
+    p = os.path.join(HERE, '.env')
+    if not os.path.exists(p):
+        return
+    for line in open(p, encoding='utf-8'):
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        k, v = line.split('=', 1)
+        k = k.strip()
+        v = v.strip().strip('"').strip("'")
+        if k and k not in os.environ:
+            os.environ[k] = v
+
+
+load_env()
+
+BOT_TOKEN = os.environ.get('TG_BOT_TOKEN', '').strip()
+API_BASE = os.environ.get('TG_API_BASE', 'https://api.telegram.org').rstrip('/')
+ALLOWED_USERS = {x.strip() for x in os.environ.get('TG_ALLOWED_USERS', '').split(',') if x.strip()}
+FOFA_EMAIL = os.environ.get('FOFA_EMAIL', '').strip()
+FOFA_PROXY_KEY = os.environ.get('FOFA_PROXY_KEY', '').strip()
+FOFA_KEY = os.environ.get('FOFA_KEY', '').strip()
+QUAKE_KEY = os.environ.get('QUAKE_KEY', '').strip()
+FOFA_SIZE = int(os.environ.get('FOFA_SIZE', '100'))
+QUAKE_SIZE = int(os.environ.get('QUAKE_SIZE', '20'))
+
+DATA_DIR = os.path.join(HERE, 'data')
+STATE_FILE = os.path.join(DATA_DIR, 'state.json')
+SETTINGS_FILE = os.path.join(DATA_DIR, 'settings.json')
+os.makedirs(DATA_DIR, exist_ok=True)
+
+STORE = subman.Store()
+SHORTS = shortlink.ShortStore()
+WAITING = {}          # chat_id -> ('fofa'|'quake'|'word_add'|'alias_add'|'short_new', None)
+LIST_SNAP = {}        # chat_id -> [url,...]  列表页索引快照
+HARVEST = {}          # chat_id -> [url,...]  上次搜索发现的订阅
+SEARCHING = set()     # 忙标记
+JOBS_LOCK = threading.Lock()
+
+
+def load_settings():
+    d = {'sort': 'expire', 'blockwords': [], 'aliases': {}}
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            d.update(json.load(open(SETTINGS_FILE, encoding='utf-8')))
+        except Exception:
+            pass
+    return d
+
+
+def save_settings(d):
+    tmp = SETTINGS_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, SETTINGS_FILE)
+
+
+SET = load_settings()
+
+HELP = (
+    '🛰 PANGHU 风格 · 资产搜索 + 订阅管理 Bot\n\n'
+    '📋 菜单功能:\n'
+    '• FOFA搜索 / Quake搜索 — 发查询语句, 结果导出 txt, 顺手收割订阅链接\n'
+    '• 订阅列表 — 库里全部订阅 (点进去可刷新/测活/收藏/删除)\n'
+    '• 临期列表 — 按到期时间排序, 标注剩几天\n'
+    '• 更新所有 — 全库刷新 userinfo (节点数/剩余流量/到期)\n'
+    '• 导出链接 — 全部/收藏/有额度/存活 四种口径导出 txt\n'
+    '• 收藏列表 / 短链管理 (is.gd·tinyurl) / 排序设置\n'
+    '• 屏蔽词表 — 命中词的行/节点不展示\n'
+    '• 路径对应 — 名字 ↔ URL 映射, 聊天框直接打名字即回链\n'
+    '• 🛰 TURN扫描 — 批量扫 TURN/STUN: TCPing→协议识别→弱口令→中继验证\n'
+    '• 🧩 节点转换 — 粘贴任意节点/订阅/配置 → 转 Clash/V2Ray/Sing-box/Surge/QX/Loon\n\n'
+    '💬 直接发消息也能用:\n'
+    '• 发订阅链接 (可多条) → 自动入库并查流量\n'
+    '• /fofa <语句> 或 /quake <语句> 直接搜\n'
+    '• 发路径对应的别名 → 回对应 URL\n\n'
+    '⚙️ .env 配置: TG_BOT_TOKEN / TG_ALLOWED_USERS / '
+    'FOFA_EMAIL+FOFA_KEY / QUAKE_KEY'
+)
+
+# ---------------------------------------------------------------- TG API
+def api(method, payload=None, files=None, timeout=70):
+    url = f'{API_BASE}/bot{BOT_TOKEN}/{method}'
+    for _ in range(3):
+        try:
+            if files:
+                r = requests.post(url, data=payload or {}, files=files, timeout=timeout)
+            else:
+                r = requests.post(url, json=payload or {}, timeout=timeout)
+            j = r.json()
+            if j.get('ok'):
+                return j.get('result')
+            desc = j.get('description', '')
+            if 'retry after' in desc.lower():
+                time.sleep(5)
+                continue
+            print(f'[api] {method} fail: {desc}', flush=True)
+            return None
+        except Exception as e:
+            print(f'[api] {method} err: {e}', flush=True)
+            time.sleep(3)
+    return None
+
+
+def send(chat_id, text, keyboard=None, reply_to=None):
+    payload = {'chat_id': chat_id, 'text': text[:4000]}
+    if reply_to:
+        payload['reply_to_message_id'] = reply_to
+    if keyboard:
+        payload['reply_markup'] = {'inline_keyboard': keyboard}
+    return api('sendMessage', payload)
+
+
+def edit(chat_id, msg_id, text, keyboard=None):
+    payload = {'chat_id': chat_id, 'message_id': msg_id, 'text': text[:4000]}
+    if keyboard:
+        payload['reply_markup'] = {'inline_keyboard': keyboard}
+    return api('editMessageText', payload)
+
+
+def send_doc(chat_id, filename, content, caption='', reply_to=None):
+    if isinstance(content, str):
+        content = content.encode()
+    files = {'document': (filename, content, 'text/plain')}
+    payload = {'chat_id': chat_id, 'caption': caption[:1000]}
+    if reply_to:
+        payload['reply_to_message_id'] = reply_to
+    return api('sendDocument', payload, files=files)
+
+
+def btn(text, data):
+    return {'text': text, 'callback_data': data}
+
+
+# ---------------------------------------------------------------- 菜单
+def main_menu():
+    return [
+        [btn('帮助菜单', 'h|help'), btn('排序设置', 'c|menu')],
+        [btn('FOFA搜索', 's|fofa'), btn('Quake 搜索', 's|quake')],
+        [btn('屏蔽词表', 'w|list'), btn('路径对应', 'a|list')],
+        [btn('收藏列表', 'f|list'), btn('短链管理', 'k|menu')],
+        [btn('导出链接', 'e|menu'), btn('更新所有', 'u|all')],
+        [btn('临期列表', 'p|list'), btn('订阅列表', 'l|list|0')],
+        [btn('🛰 TURN扫描', 'ts|menu'), btn('🧩 节点转换', 'cv|menu')],
+    ]
+
+
+SORT_LABELS = {
+    'expire': '到期时间 ↑', 'rest': '剩余流量 ↓',
+    'nodes': '节点数 ↓', 'added': '加入时间 ↓',
+}
+
+
+def sort_menu():
+    cur = SET.get('sort', 'expire')
+    return [[btn(('✅ ' if k == cur else '') + v, f'c|{k}')]
+            for k, v in SORT_LABELS.items()] + [[btn('↩️ 返回', 'm|main')]]
+
+
+def back_row():
+    return [btn('↩️ 主菜单', 'm|main')]
+
+
+def page_row(prefix, page, total_pages):
+    row = []
+    if page > 0:
+        row.append(btn('⬅️ 上一页', f'{prefix}|{page - 1}'))
+    row.append(btn(f'{page + 1}/{total_pages}', 'noop'))
+    if page < total_pages - 1:
+        row.append(btn('下一页 ➡️', f'{prefix}|{page + 1}'))
+    return row
+
+# ---------------------------------------------------------------- 渲染
+def fmt_left(sec):
+    if not sec:
+        return '—'
+    d = int(sec)
+    if d < 0:
+        return '已过期'
+    if d >= 86400:
+        return f'{d // 86400}天'
+    if d >= 3600:
+        return f'{d // 3600}时'
+    return f'{d // 60}分'
+
+
+def sub_line(u, v):
+    last = v.get('last') or {}
+    name = v.get('name') or subman.host_of(u)
+    star = '⭐' if v.get('fav') else ''
+    nodes = last.get('nodes')
+    parts = [f'{star}{name}']
+    if nodes:
+        parts.append(f'{nodes}节点')
+    if last.get('rest_gb') is not None:
+        parts.append(f'剩{last["rest_gb"]}G')
+    elif last.get('total_gb'):
+        parts.append('查询失败')
+    if last.get('expire'):
+        left = last['expire'] - time.time()
+        parts.append(fmt_left(left))
+    elif last:
+        parts.append('永久')
+    return ' · '.join(parts)
+
+
+def list_view(chat_id, kind='l', page=0, sub=None):
+    """kind: l=订阅 p=临期 f=收藏; sub 是子视图的 key'last'/'del' 等"""
+    if kind == 'f':
+        urls = STORE.sorted_urls(SET.get('sort', 'expire'), only_fav=True)
+        title = '⭐ 收藏列表'
+    elif kind == 'p':
+        allu = STORE.sorted_urls('expire')
+        urls = [u for u in allu if (STORE.get(u) or {}).get('last', {}).get('expire')]
+        title = '⏳ 临期列表'
+    else:
+        urls = STORE.sorted_urls(SET.get('sort', 'expire'))
+        title = '📋 订阅列表'
+
+    if not urls:
+        return f'{title}\n\n（空）', [[btn('➕ 添加订阅', 'l|add_hint')]] + [back_row()]
+
+    PER = 8
+    tp = max(1, (len(urls) + PER - 1) // PER)
+    page = max(0, min(page, tp - 1))
+    chunk = urls[page * PER:(page + 1) * PER]
+    LIST_SNAP[chat_id] = urls
+
+    kb, lines = [], []
+    for i, u in enumerate(chunk):
+        v = STORE.get(u) or {}
+        idx = page * PER + i
+        lines.append(f'{idx + 1}. {sub_line(u, v)}')
+        kb.append([btn(sub_line(u, v)[:60] or u[:60], f'd|{kind}|{idx}')])
+    head = f'{title} · 共 {len(urls)} 条 · 第 {page + 1}/{tp} 页'
+    kb.append(page_row(f'{kind}|list', page, tp))
+    kb.append(back_row())
+    return head + '\n\n' + '\n'.join(lines) + '\n\n点下方按钮操作', kb
+
+
+def detail_view(chat_id, kind, idx):
+    urls = LIST_SNAP.get(chat_id) or []
+    if idx >= len(urls):
+        return '该条已失效，回列表刷新一下。', [[btn('↩️ 返回', f'{kind}|list|0')]]
+    u = urls[idx]
+    v = STORE.get(u) or {}
+    last = v.get('last') or {}
+    star = '⭐ ' if v.get('fav') else ''
+    lines = [f'{star}{v.get("name") or subman.host_of(u)}',
+             f'🔗 {u}']
+    if last:
+        lines.append('')
+        if last.get('nodes'):
+            lines.append(f'节点数: {last["nodes"]}')
+        if last.get('total_gb') is not None:
+            lines.append(f'流量: 已用 {last.get("used_gb")}G / 总 {last.get("total_gb")}G '
+                         f'/ 剩 {last.get("rest_gb")}G')
+        elif last.get('total_gb'):
+            lines.append('流量: 订阅未返回 userinfo')
+        if last.get('expire'):
+            lines.append(f'到期: {last.get("expire_date")} ({fmt_left(last["expire"] - time.time())})')
+        elif last.get('expire_date'):
+            lines.append(f'到期: {last.get("expire_date")}')
+        else:
+            lines.append('到期: 永久/未知')
+        if last.get('ts'):
+            lines.append('更新: ' + time.strftime('%m-%d %H:%M', time.localtime(last['ts'])))
+    else:
+        lines.append('\n⏳ 还没刷新过，点「刷新」查流量与节点数')
+    kb = [
+        [btn('🔄 刷新', f'r|{kind}|{idx}'), btn('📡 测活', f't|{kind}|{idx}')],
+        [btn('⭐ 取消收藏' if v.get('fav') else '☆ 收藏', f'v|{kind}|{idx}'),
+         btn('✏️ 重命名', f'n|{kind}|{idx}')],
+        [btn('🔗 转短链', f'k2|{kind}|{idx}'), btn('🗑 删除', f'x|{kind}|{idx}')],
+        [btn('↩️ 返回列表', f'{kind}|list|0')],
+    ]
+    return '\n'.join(lines), kb
+
+# ---------------------------------------------------------------- 搜索
+def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
+    """后台线程执行搜索, 完成后发文件 + 收割订阅"""
+    key = (chat_id, engine)
+    with JOBS_LOCK:
+        if key in SEARCHING:
+            send(chat_id, '⏳ 这个搜索还在跑，等结果。')
+            return
+        SEARCHING.add(key)
+
+    def _run():
+        try:
+            if engine == 'fofa':
+                if not ((FOFA_EMAIL and FOFA_KEY) or FOFA_PROXY_KEY):
+                    send(chat_id, '❌ 未配置 FOFA: 在 .env 里填 FOFA_EMAIL 和 FOFA_KEY')
+                    return
+                send(chat_id, f'🔍 FOFA 搜索中…\n查询: {q[:200]}')
+                res = fofa.search(FOFA_EMAIL, FOFA_KEY, q, size=FOFA_SIZE)
+            else:
+                if not QUAKE_KEY:
+                    send(chat_id, '❌ 未配置 Quake: 在 .env 里填 QUAKE_KEY')
+                    return
+                send(chat_id, f'🔍 QUAKE 搜索中…\n查询: {q[:200]}')
+                res = quake.search(QUAKE_KEY, q, size=QUAKE_SIZE)
+
+            rows = res['rows']
+            LAST_ROWS[chat_id] = rows
+            if auto_turn:
+                tg = turn_targets_from_rows(rows)
+                if tg:
+                    send(chat_id, f'🛰 搜索结果 {len(rows)} 条 → {len(tg)} 个目标, 开始 TURN 扫描…')
+                    start_turn_scan(chat_id, tg)
+            blockwords = SET.get('blockwords') or []
+            lines = (fofa.render_rows(rows, blockwords) if engine == 'fofa'
+                     else quake.render_rows(rows, blockwords))
+            body = '\n'.join(lines) if lines else '(无结果)'
+
+            # 收割订阅链接
+            harvested = []
+            for r in rows:
+                harvested.extend(subman.harvest_urls(r.get('body') or ''))
+                harvested.extend(subman.harvest_urls(r.get('host') or ''))
+            seen, h2 = set(), []
+            for u in harvested:
+                if u not in seen and u not in STORE.d:
+                    seen.add(u)
+                    h2.append(u)
+            HARVEST[chat_id] = h2
+
+            ts = time.strftime('%Y%m%d_%H%M%S')
+            tag = 'fofa' if engine == 'fofa' else 'quake'
+            fname = f'{tag}_{ts}_{len(lines)}条.txt'
+            head = (f'{engine.upper()} 搜索完成\n'
+                    f'查询: {q}\n'
+                    f'总计: {res["total"]} · 本次导出: {len(lines)} 条\n'
+                    f'domain: 无 · 屏蔽词过滤: {len(blockwords)} 个')
+            send_doc(chat_id, fname, head + '\n\n' + body,
+                     caption=f'{engine.upper()} 完成 · {len(lines)}/{res["total"]} 条', reply_to=reply_to)
+
+            kb = []
+            if h2:
+                kb.append([btn(f'📥 收割订阅 ({len(h2)})', 'hv|go')])
+            kb.append([btn('↩️ 主菜单', 'm|main')])
+            send(chat_id, f'{engine.upper()} 完成\n导出 {len(lines)} 条'
+                          + (f'\n发现 {len(h2)} 条疑似订阅链接' if h2 else '\n未发现订阅链接'),
+                 keyboard=kb)
+        except Exception as e:
+            msg = str(e)[:300]
+            send(chat_id, f'❌ {engine.upper()} 搜索失败:\n{msg}')
+        finally:
+            with JOBS_LOCK:
+                SEARCHING.discard(key)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def harvest_add(chat_id):
+    """把上次搜索收割到的链接批量入库并逐个查 userinfo"""
+    urls = HARVEST.get(chat_id) or []
+    if not urls:
+        return '没有待收割的链接。', [[btn('↩️ 主菜单', 'm|main')]]
+    added = 0
+    for u in urls:
+        ok, _ = STORE.add(u)
+        if ok:
+            added += 1
+    HARVEST.pop(chat_id, None)
+    return (f'✅ 已入库 {added} 条 (跳过重复 {len(urls) - added} 条)\n'
+            f'点「更新所有」批量查流量和节点数。',
+            [[btn('🔄 更新所有', 'u|all')], [btn('↩️ 主菜单', 'm|main')]])
+
+
+# ---------------------------------------------------------------- 刷新/测活
+def refresh_one(chat_id, url, msg_id=None, label=''):
+    """拉订阅 → userinfo + 节点数; 有 msg_id 就原地改消息"""
+    text, ui, err = subman.fetch_sub(url)
+    if err:
+        payload = {'nodes': 0, 'rest_gb': None, 'total_gb': None,
+                   'expire': 0, 'err': err}
+        STORE.record(url, payload)
+        out = f'❌ {label or subman.host_of(url)} 刷新失败: {err}'
+    else:
+        nodes = []
+        try:
+            r = parse_subscription(text)
+            nodes = r[0] if isinstance(r, tuple) else r
+        except Exception:
+            pass
+        payload = {
+            'nodes': len(nodes),
+            'rest_gb': ui.get('rest_gb') if ui else None,
+            'total_gb': ui.get('total_gb') if ui else None,
+            'used_gb': ui.get('used_gb') if ui else None,
+            'expire': ui.get('expire') if ui else 0,
+            'expire_date': ui.get('expire_date') if ui else None,
+        }
+        STORE.record(url, payload)
+        bits = [f'✅ {label or subman.host_of(url)}']
+        bits.append(f'{len(nodes)} 节点')
+        if ui and ui.get('total_gb'):
+            bits.append(f'剩 {ui["rest_gb"]}G / {ui["total_gb"]}G')
+        if ui and ui.get('expire_date'):
+            bits.append(f'到期 {ui["expire_date"]}')
+        if not ui:
+            bits.append('(无 userinfo)')
+        out = ' · '.join(bits)
+    if msg_id:
+        edit(chat_id, msg_id, out, [[btn('↩️ 主菜单', 'm|main')]])
+    return out, payload
+
+
+def update_all(chat_id):
+    urls = STORE.urls()
+    if not urls:
+        return '库是空的，先加订阅。', [[btn('↩️ 主菜单', 'm|main')]]
+    msg = send(chat_id, f'🔄 更新所有… 0/{len(urls)}')
+    mid = (msg or {}).get('message_id')
+
+    def _run():
+        ok = 0
+        for i, u in enumerate(urls, 1):
+            try:
+                _, p = refresh_one(chat_id, u)
+                if not p.get('err'):
+                    ok += 1
+            except Exception:
+                pass
+            if mid and (i % 3 == 0 or i == len(urls)):
+                edit(chat_id, mid, f'🔄 更新所有… {i}/{len(urls)} (成功 {ok})')
+        if mid:
+            edit(chat_id, mid, f'✅ 更新完成: {ok}/{len(urls)} 成功',
+                 [[btn('📋 看订阅列表', 'l|list|0')], [btn('↩️ 主菜单', 'm|main')]])
+
+    threading.Thread(target=_run, daemon=True).start()
+    return None, None
+
+
+def test_alive(chat_id, url, msg_id=None, kind='l', idx=0):
+    """测活: 拉节点 → TCP 快测, 播报进度"""
+    text, ui, err = subman.fetch_sub(url)
+    if err:
+        if msg_id:
+            edit(chat_id, msg_id, f'❌ 拉取失败: {err}', [[btn('↩️ 返回', 'm|main')]])
+        return
+    nodes = []
+    try:
+        r = parse_subscription(text)
+        nodes = r[0] if isinstance(r, tuple) else r
+    except Exception:
+        pass
+    if not nodes:
+        if msg_id:
+            edit(chat_id, msg_id, '❌ 没解析出节点，无法测活', [[btn('↩️ 返回', 'm|main')]])
+        return
+    name = (STORE.get(url) or {}).get('name') or subman.host_of(url)
+    mid = msg_id
+    if mid:
+        edit(chat_id, mid, f'📡 测活中 0/{len(nodes)}')
+
+    def _progress(done, total):
+        if mid and (done == total or done % max(1, total // 10) == 0):
+            try:
+                edit(chat_id, mid, f'📡 测活中 {done}/{total}')
+            except Exception:
+                pass
+
+    def _run():
+        try:
+            res = fastping(nodes, timeout=2.5, progress=_progress)
+            a, d, un = len(res['alive']), len(res['dead']), len(res['unknown'])
+            STORE.record(url, {'alive': a, 'dead': d, 'nodes': len(nodes),
+                               'checked': int(time.time())})
+            out = (f'📡 {name} 测活完成\n'
+                   f'存活 {a} · 失联 {d} · UDP待定 {un} (共 {len(nodes)})\n'
+                   f'判定方式: TCP 握手 (UDP 协议不误杀)')
+            if mid:
+                edit(chat_id, mid, out, [[btn('🔄 重测', f't|{kind}|{idx}'), btn('↩️ 返回', 'm|main')]])
+            else:
+                send(chat_id, out, [[btn('↩️ 主菜单', 'm|main')]])
+        except Exception as e:
+            if mid:
+                edit(chat_id, mid, f'❌ 测活异常: {str(e)[:150]}')
+
+    threading.Thread(target=_run, daemon=True).start()
+
+# ---------------------------------------------------------------- 导出
+def export_menu():
+    n = len(STORE.urls())
+    fav = len([1 for v in STORE.d.values() if v.get('fav')])
+    withquota = len([1 for v in STORE.d.values()
+                     if (v.get('last') or {}).get('rest_gb') is not None])
+    alive = len([1 for v in STORE.d.values() if (v.get('last') or {}).get('alive')])
+    return (f'📤 导出链接 · 共 {n} 条\n'
+            f'收藏 {fav} · 有额度 {withquota} · 存活 {alive}\n\n选口径:',
+            [[btn(f'全部 ({n})', 'e|do|all'), btn(f'⭐ 收藏 ({fav})', 'e|do|fav')],
+             [btn(f'有额度 ({withquota})', 'e|do|quota'), btn(f'存活 ({alive})', 'e|do|alive')],
+             back_row()])
+
+
+def do_export(chat_id, mode):
+    urls = STORE.sorted_urls(SET.get('sort', 'expire'))
+    if mode == 'fav':
+        urls = [u for u in urls if (STORE.get(u) or {}).get('fav')]
+    elif mode == 'quota':
+        urls = [u for u in urls if (STORE.get(u) or {}).get('last', {}).get('rest_gb') is not None]
+    elif mode == 'alive':
+        urls = [u for u in urls if (STORE.get(u) or {}).get('last', {}).get('alive')]
+    if not urls:
+        return '❌ 这个口径下没有链接。'
+    body = '\n'.join(urls)
+    fname = f'export_{mode}_{time.strftime("%Y%m%d_%H%M%S")}.txt'
+    send_doc(chat_id, fname, body, caption=f'导出 {len(urls)} 条 ({mode})')
+    return f'✅ 已导出 {len(urls)} 条'
+
+
+# ---------------------------------------------------------------- 屏蔽词 / 路径
+def words_view():
+    ws = SET.get('blockwords') or []
+    body = '\n'.join(f'{i + 1}. {w}' for i, w in enumerate(ws)) or '（空）'
+    kb = []
+    for i, w in enumerate(ws[:10]):
+        kb.append([btn(f'🗑 {w[:20]}', f'w|del|{i}')])
+    kb.append([btn('➕ 添加屏蔽词', 'w|add'), btn('↩️ 主菜单', 'm|main')])
+    return f'🚫 屏蔽词表 · {len(ws)} 个\n命中这些词的行/节点不展示\n\n{body}', kb
+
+
+def aliases_view():
+    al = SET.get('aliases') or {}
+    lines = [f'{k} → {v[:60]}' for k, v in list(al.items())[:20]] or ['（空）']
+    kb = []
+    for k in list(al.keys())[:8]:
+        kb.append([btn(f'🗑 {k[:24]}', f'a|del|{k}')])
+    kb.append([btn('➕ 添加对应', 'a|add'), btn('↩️ 主菜单', 'm|main')])
+    return ('🔗 路径对应 · 名字 ↔ URL\n'
+            '在聊天框直接发名字即可回链接\n\n' + '\n'.join(lines)), kb
+
+
+def shorts_view():
+    d = SHORTS.d
+    if not d:
+        return '🔗 短链管理\n\n（空）\n在订阅详情点「转短链」生成。', [
+            [btn('➕ 直接转换', 'k|new')], back_row()]
+    lines = [f'{i + 1}. {x["short"]}\n   ← {x["long"][:70]}' for i, x in enumerate(d[-10:])]
+    kb = [[btn(f'🗑 删 #{i + 1}', f'k|del|{len(d) - 10 + i}')] for i in range(max(0, len(d) - 10), len(d))]
+    kb.append([btn('➕ 直接转换', 'k|new'), btn('↩️ 主菜单', 'm|main')])
+    return f'🔗 短链管理 · {len(d)} 条 (最近10条)\n\n' + '\n'.join(lines), kb
+
+
+# ---------------------------------------------------------------- TURN 扫描
+TURN_PARAMS = {'c': 100, 'p': 500, 'pt': 3.0, 't': 5.0, 'ct': 8.0}
+TURN_JOB = {}          # chat_id -> {'running','hits','targets','alive','total'}
+LAST_ROWS = {}         # chat_id -> 上次 FOFA/Quake 的 rows
+TURN_FOFA_Q = ('(app="Coturn-Server" || app="coturn-TURN-Server" || header="coturn" || '
+               'banner="coturn" || port="3479" || port="3478" || port="5349" || '
+               'server="Citrix" || server="Coturn" || title="TURN Server" || '
+               'body_hash="-558802108" || body_hash="753498134" || protocol="stun" || '
+               '"XOR-MAPPED-ADDRESS") && is_domain=false && tls.version="" && '
+               'protocol!="unknown" && protocol!="ssh"')
+
+
+def turn_menu(chat_id):
+    p = TURN_PARAMS
+    job = TURN_JOB.get(chat_id) or {}
+    state = '⏳ 正在扫…' if job.get('running') else '空闲'
+    text = ('🛰 TURN / STUN 扫描\n\n'
+            '流程: TCPing 探活 → ALLOCATE 识别 → 24 组弱口令 → 中继验证\n'
+            'TCP 中继: Permission+Connect+ConnectionBind → TLS 拿出口归属地\n'
+            'UDP 中继: Allocate(UDP)+Permission+Send(DNS) → 校验回包\n\n'
+            f'⚙️ 扫描并发 {p["c"]} · TCPing {p["p"]}\n'
+            f'⏱ 超时 TCPing {p["pt"]}s · 扫描 {p["t"]}s · Connect {p["ct"]}s\n'
+            f'📌 状态: {state}\n')
+    if job.get('hits') or job.get('identified'):
+        text += (f'🎯 上次: 可用中继 {len(job.get("hits") or [])} · '
+                 f'仅识别 {len(job.get("identified") or [])} (目标 {job.get("total", 0)})\n')
+    text += '\n点「粘贴 IP 列表」发 ip:port 清单, 或直接用上次 FOFA/Quake 的结果。'
+    kb = []
+    if job.get('hits'):
+        kb.append([btn(f'📄 上次结果 ({len(job["hits"])})', 'ts|res')])
+    kb.append([btn('🔍 FOFA 扫 TURN (内置语法)', 'ts|fofa')])
+    kb.append([btn('📥 粘贴 IP 列表', 'ts|paste')])
+    kb.append([btn('📋 用上次搜索结果', 'ts|last')])
+    kb.append([btn('⚙️ 扫描参数', 'ts|cfg')])
+    kb.append(back_row())
+    return text, kb
+
+
+def turn_res_view(chat_id):
+    job = TURN_JOB.get(chat_id) or {}
+    hits = job.get('hits') or []
+    if not hits:
+        return '还没有结果，先扫一轮。', [[btn('↩️ 返回', 'ts|menu')]]
+    lines = [f'{i + 1}. {turnscan.fmt_line(h)}' for i, h in enumerate(hits[:40])]
+    ident = job.get('identified') or []
+    if ident:
+        lines.append(f'\n— 仅识别(需认证) {len(ident)} 个 —')
+        lines += [f'· {turnscan.fmt_line(h)}' for h in ident[:10]]
+    head = (f'🎯 TURN 可用中继 {len(hits)} 个 · 仅识别 {len(ident)} 个\n'
+            f'目标 {job.get("total", 0)} · TCP 存活 {job.get("alive", 0)}\n\n')
+    kb = [[btn('📄 发文件', 'ts|doc'), btn('🔁 再扫一次', 'ts|rerun')],
+          [btn('↩️ 返回', 'ts|menu')]]
+    return head + '\n'.join(lines), kb
+
+
+def turn_doc_body(chat_id):
+    job = TURN_JOB.get(chat_id) or {}
+    hits = job.get('hits') or []
+    ident = job.get('identified') or []
+    head = ('# TURN/STUN Scan\n'
+            f'# 时间: {time.strftime("%Y-%m-%d %H:%M:%S")}\n'
+            f'# 目标: {job.get("total", 0)}   TCP存活: {job.get("alive", 0)}   '
+            f'可用中继: {len(hits)}   仅识别: {len(ident)}\n'
+            '# 格式: ip:port  模式(ALL/TCP/UDP/AUTH)  出口归属地  '
+            '认证(NO_AUTH/WEAK(账号:密码)/NEED_AUTH)  Software\n\n'
+            '## 可用中继 (弱口令或免认证, 已过中继验证)\n')
+    body = '\n'.join(turnscan.fmt_line(h) for h in hits) or '(无)'
+    body += '\n\n## 仅识别 (TURN 服务在, 但要认证)\n'
+    body += '\n'.join(turnscan.fmt_line(h) for h in ident) or '(无)'
+    return head + body + '\n'
+
+
+def start_turn_scan(chat_id, targets, msg_id=None):
+    job = TURN_JOB.setdefault(chat_id, {})
+    if job.get('running'):
+        send(chat_id, '⏳ 上一轮还在扫，等它跑完再来。')
+        return
+    if not targets:
+        send(chat_id, '❌ 没解析出有效目标。格式: `1.2.3.4:3478` 或 `1.2.3.4`(默认 3478)',
+             [[btn('↩️ 返回', 'ts|menu')]])
+        return
+    if len(targets) > 20000:
+        send(chat_id, f'❌ 目标太多 ({len(targets)}), 上限 20000, 分批来。')
+        return
+
+    p = dict(TURN_PARAMS)
+    job.update({'running': True, 'hits': [], 'total': len(targets),
+                'alive': 0, 'targets': list(targets)})
+
+    if msg_id:
+        mid = msg_id
+        edit(chat_id, mid, f'🛰 TURN 扫描启动 · {len(targets)} 目标\nTCPing 阶段…')
+    else:
+        m = send(chat_id, f'🛰 TURN 扫描启动 · {len(targets)} 目标\nTCPing 阶段…')
+        mid = (m or {}).get('message_id')
+
+    last = [0.0]
+
+    def prog(done, total, alive, hits):
+        job['alive'] = alive
+        now = time.time()
+        if now - last[0] < 3:
+            return
+        last[0] = now
+        if not mid:
+            return
+        try:
+            if done < total:
+                edit(chat_id, mid, f'🛰 TCPing 探活 {done}/{total}\n存活 {alive}')
+            else:
+                edit(chat_id, mid, f'🔬 协议识别 + 弱口令 + 中继验证\n'
+                                   f'TCP 存活 {alive} · 已命中 {hits}')
+        except Exception:
+            pass
+
+    def _run():
+        try:
+            res = turnscan.scan(targets, p['c'], p['p'], p['pt'], p['t'], p['ct'], prog)
+        except Exception as e:
+            job['running'] = False
+            if mid:
+                edit(chat_id, mid, f'❌ 扫描异常: {str(e)[:200]}',
+                     [[btn('↩️ 返回', 'ts|menu')]])
+            return
+        hits = res['hits']
+        ident = res.get('identified') or []
+        job.update({'running': False, 'hits': hits, 'identified': ident,
+                    'alive': res['alive']})
+        summ = (f'✅ TURN 扫描完成\n'
+                f'目标 {res["total"]} · TCP 存活 {res["alive"]}\n'
+                f'可用中继 {len(hits)} · 仅识别(需认证) {len(ident)}\n'
+                + ('\n'.join(turnscan.fmt_line(h) for h in hits[:10]) if hits else '\n(无可用中继)'))
+        kb = [[btn('📄 发文件', 'ts|doc')], [btn('🔁 再扫一次', 'ts|rerun')],
+              [btn('↩️ 返回', 'ts|menu')]]
+        if mid:
+            edit(chat_id, mid, summ[:4000], kb)
+        else:
+            send(chat_id, summ[:4000], kb)
+        if hits:
+            send_doc(chat_id, f'turn_results_{time.strftime("%Y%m%d_%H%M%S")}.txt',
+                     turn_doc_body(chat_id), caption=f'TURN 命中 {len(hits)} 个')
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def turn_targets_from_rows(rows):
+    out = []
+    for r in rows or []:
+        host = str(r.get('host') or '').strip()
+        port = str(r.get('port') or '').strip()
+        if not host:
+            continue
+        if re.search(r':\d+$', host):      # host 自带端口, 别再拼
+            out.append(host)
+        elif port.isdigit():
+            out.append(f'{host}:{port}')
+        else:
+            out.append(host)
+    return turnscan.parse_targets('\n'.join(out))
+
+
+# ---------------------------------------------------------------- 节点转换
+NODES = {}                                  # chat_id -> 最近解析出的节点
+POOL_FILE = os.path.join(DATA_DIR, 'nodepool.json')
+
+FMTS = {
+    'clash':   ('yaml', 'Clash / mihomo', gen.to_clash),
+    'v2ray':   ('txt',  'V2Ray base64 订阅', gen.to_v2ray_b64),
+    'singbox': ('json', 'Sing-box', gen.to_singbox),
+    'surge':   ('conf', 'Surge', gen.to_surge),
+    'qx':      ('conf', 'Quantumult X', gen.to_quantumultx),
+    'loon':    ('conf', 'Loon', gen.to_loon),
+    'links':   ('txt',  '纯节点链接', gen.to_links),
+}
+
+
+def load_pool():
+    try:
+        return json.load(open(POOL_FILE, encoding='utf-8'))
+    except Exception:
+        return []
+
+
+def save_pool(lst):
+    tmp = POOL_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(lst, f, ensure_ascii=False)
+    os.replace(tmp, POOL_FILE)
+
+
+def _fmt_stats(nodes, title):
+    st = stats(nodes)
+    types = ' · '.join(f'{k}×{v}' for k, v in sorted(st['types'].items(), key=lambda x: -x[1]))
+    regions = ' · '.join(f'{k}×{v}' for k, v in sorted(st['regions'].items(), key=lambda x: -x[1])
+                         if k != 'XX') or '—'
+    return (f'{title}\n\n'
+            f'✅ 节点 {st["total"]} 个\n'
+            f'🔌 协议: {types or "—"}\n'
+            f'🌍 地区: {regions}\n')
+
+
+def nodes_kb(has_nodes=True):
+    kb = []
+    if has_nodes:
+        kb.append([btn('Clash', 'cv|fmt|clash'), btn('V2Ray 订阅', 'cv|fmt|v2ray')])
+        kb.append([btn('Sing-box', 'cv|fmt|singbox'), btn('Surge', 'cv|fmt|surge')])
+        kb.append([btn('Quantumult X', 'cv|fmt|qx'), btn('Loon', 'cv|fmt|loon')])
+        kb.append([btn('纯链接', 'cv|fmt|links'), btn('➕ 存入节点池', 'cv|save')])
+    kb.append([btn('↩️ 节点转换', 'cv|menu')])
+    return kb
+
+
+def cv_menu(chat_id):
+    pool = load_pool()
+    text = ('🧩 节点转换 · 自定配置 → 订阅\n\n'
+            '直接把下面任意一种发给我:\n'
+            '• 节点链接 (ss:// vmess:// vless:// trojan:// hysteria2:// tuic:// …)\n'
+            '• 一坨 base64 订阅内容\n'
+            '• 整份 Clash / mihomo YAML\n'
+            '• Sing-box JSON\n\n'
+            '解析后可选格式: Clash / V2Ray / Sing-box / Surge / QX / Loon / 纯链接\n'
+            f'📦 节点池: {len(pool)} 个节点\n')
+    kb = [[btn('📥 粘贴节点 / 订阅 / 配置', 'cv|paste')],
+          [btn(f'📦 节点池 ({len(pool)})', 'cv|pool')],
+          [btn('📋 订阅列表', 'l|list|0')],
+          back_row()]
+    return text, kb
+
+
+def handle_nodes_text(chat_id, text, msg_id=None):
+    """任意节点文本 → 解析 → 展示可导出格式"""
+    try:
+        nodes, fmt = parse_subscription(text)
+    except Exception as e:
+        send(chat_id, f'❌ 解析失败: {str(e)[:150]}')
+        return
+    nodes = dedup(nodes)
+    nodes, dropped = validate_nodes(nodes)
+    if not nodes:
+        send(chat_id, '❌ 没解析出可用节点。\n支持的: 节点链接 / base64 订阅 / Clash YAML / Sing-box JSON',
+             [[btn('↩️ 节点转换', 'cv|menu')]])
+        return
+    NODES[chat_id] = nodes
+    head = _fmt_stats(nodes, f'🧩 解析完成 · 来源 {fmt}')
+    if dropped:
+        head += '⚠️ 丢弃脏节点: ' + ', '.join(f'{k}×{v}' for k, v in dropped.items()) + '\n'
+    head += '\n选一个格式导出，或先存进节点池。'
+    if msg_id:
+        edit(chat_id, msg_id, head, nodes_kb())
+    else:
+        send(chat_id, head, nodes_kb())
+
+
+def do_convert(chat_id, fmt, nodes=None, tag='sub'):
+    spec = FMTS.get(fmt)
+    if not spec:
+        return
+    ext, label, fn = spec
+    nodes = nodes if nodes is not None else (NODES.get(chat_id) or [])
+    if not nodes:
+        send(chat_id, '❌ 没有节点，先发点配置过来。', [[btn('↩️ 节点转换', 'cv|menu')]])
+        return
+    try:
+        content = fn(nodes)
+    except Exception as e:
+        send(chat_id, f'❌ 生成 {label} 失败: {str(e)[:150]}')
+        return
+    fname = f'{tag}_{fmt}_{time.strftime("%Y%m%d_%H%M%S")}.{ext}'
+    send_doc(chat_id, fname, content, caption=f'{label} · {len(nodes)} 节点')
+    send(chat_id, f'✅ 已生成 {label} · {len(nodes)} 节点',
+         [[btn('🔗 上传为订阅链接', f'cv|up|{fmt}|{tag}'), btn('↩️ 节点转换', 'cv|menu')]])
+
+
+def pool_view(chat_id):
+    pool = load_pool()
+    if not pool:
+        return ('📦 节点池 · 空\n\n解析节点后点「存入节点池」, 之后可一键导出整池订阅。',
+                [[btn('📥 粘贴节点', 'cv|paste'), btn('↩️ 节点转换', 'cv|menu')]])
+    nodes = pool
+    head = _fmt_stats(nodes, '📦 节点池')
+    kb = [[btn('Clash', 'cv|pfmt|clash'), btn('V2Ray 订阅', 'cv|pfmt|v2ray')],
+          [btn('Sing-box', 'cv|pfmt|singbox'), btn('纯链接', 'cv|pfmt|links')],
+          [btn('🧹 清空节点池', 'cv|pclear')],
+          [btn('↩️ 节点转换', 'cv|menu')]]
+    return head, kb
+
+
+# ---------------------------------------------------------------- 回调
+def handle_callback(cb):
+    chat_id = cb['message']['chat']['id']
+    mid = cb['message']['message_id']
+    data = cb.get('data') or ''
+    parts = data.split('|')
+    cmd = parts[0]
+
+    def show(text, kb=None):
+        edit(chat_id, mid, text, kb)
+
+    if cmd == 'noop':
+        return
+
+    if cmd == 'm' and parts[1] == 'main':
+        edit(chat_id, mid, HELP, main_menu())
+        return
+
+    if cmd == 'h' and parts[1] == 'help':
+        show(HELP, main_menu())
+        return
+
+    if cmd == 'c':                       # 排序
+        if parts[1] == 'menu':
+            show('🔀 排序设置 (影响列表与导出顺序)\n当前: '
+                 + SORT_LABELS.get(SET.get('sort'), '到期时间 ↑'), sort_menu())
+        else:
+            SET['sort'] = parts[1]
+            save_settings(SET)
+            show('✅ 已设为: ' + SORT_LABELS.get(parts[1], parts[1]), sort_menu())
+        return
+
+    if cmd in ('l', 'p', 'f'):
+        if parts[1] == 'add_hint':
+            show('➕ 直接把订阅链接发给我即可入库\n(支持一次多条, 换行分隔)',
+                 [[btn('↩️ 返回', f'{cmd}|list|0')]])
+        else:
+            page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+            t, kb = list_view(chat_id, cmd, page)
+            show(t, kb)
+        return
+
+    if cmd == 'd':                       # 详情
+        t, kb = detail_view(chat_id, parts[1], int(parts[2]))
+        show(t, kb)
+        return
+
+    if cmd == 'r':                       # 刷新单条
+        urls = LIST_SNAP.get(chat_id) or []
+        idx = int(parts[2])
+        if idx < len(urls):
+            u = urls[idx]
+            show('🔄 刷新中…')
+            def _run():
+                try:
+                    out, _ = refresh_one(chat_id, u)
+                    edit(chat_id, mid, out, [[btn('↩️ 返回', f'{parts[1]}|list|0')]])
+                except Exception as e:
+                    edit(chat_id, mid, f'❌ {str(e)[:150]}')
+            threading.Thread(target=_run, daemon=True).start()
+        return
+
+    if cmd == 't':                       # 测活
+        urls = LIST_SNAP.get(chat_id) or []
+        idx = int(parts[2])
+        if idx < len(urls):
+            test_alive(chat_id, urls[idx], mid, parts[1], idx)
+        return
+
+    if cmd == 'v':                       # 收藏
+        urls = LIST_SNAP.get(chat_id) or []
+        idx = int(parts[2])
+        if idx < len(urls):
+            u = urls[idx]
+            cur = bool((STORE.get(u) or {}).get('fav'))
+            STORE.set_fav(u, not cur)
+            t, kb = detail_view(chat_id, parts[1], idx)
+            show(t, kb)
+        return
+
+    if cmd == 'n':                       # 重命名
+        urls = LIST_SNAP.get(chat_id) or []
+        idx = int(parts[2])
+        if idx < len(urls):
+            WAITING[chat_id] = ('rename', (parts[1], idx, urls[idx]))
+            show('✏️ 发我新名字 (单行)', [[btn('↩️ 取消', f'{parts[1]}|list|0')]])
+        return
+
+    if cmd == 'x':                       # 删除
+        urls = LIST_SNAP.get(chat_id) or []
+        idx = int(parts[2])
+        if idx < len(urls):
+            show('🗑 确认删除？\n' + urls[idx][:120],
+                 [[btn('✅ 确认删', f'x2|{parts[1]}|{idx}'), btn('↩️ 算了', f'{parts[1]}|list|0')]])
+        return
+
+    if cmd == 'x2':
+        urls = LIST_SNAP.get(chat_id) or []
+        idx = int(parts[2])
+        if idx < len(urls):
+            STORE.remove(urls[idx])
+        t, kb = list_view(chat_id, parts[1], 0)
+        show('✅ 已删除\n\n' + t, kb)
+        return
+
+    if cmd == 'k2':                      # 详情页转短链
+        urls = LIST_SNAP.get(chat_id) or []
+        idx = int(parts[2])
+        if idx < len(urls):
+            u = urls[idx]
+            show('🔗 生成短链中…')
+            def _run():
+                s, err = shortlink.shorten(u)
+                if s:
+                    SHORTS.add(u, s)
+                    edit(chat_id, mid, f'✅ 短链:\n{s}\n\n原链: {u[:80]}',
+                         [[btn('↩️ 返回', f'{parts[1]}|list|0')]])
+                else:
+                    edit(chat_id, mid, f'❌ 生成失败: {err}',
+                         [[btn('↩️ 返回', f'{parts[1]}|list|0')]])
+            threading.Thread(target=_run, daemon=True).start()
+        return
+
+    if cmd == 'k':
+        if parts[1] == 'menu':
+            t, kb = shorts_view()
+            show(t, kb)
+        elif parts[1] == 'new':
+            WAITING[chat_id] = ('short', None)
+            show('🔗 发我要转短链的长链接', [[btn('↩️ 取消', 'k|menu')]])
+        elif parts[1] == 'del':
+            SHORTS.remove(int(parts[2]))
+            t, kb = shorts_view()
+            show(t, kb)
+        return
+
+    if cmd == 'u':
+        r = update_all(chat_id)
+        if r[0]:
+            show(r[0], r[1])
+        return
+
+    if cmd == 'e':
+        if parts[1] == 'menu':
+            t, kb = export_menu()
+            show(t, kb)
+        elif parts[1] == 'do':
+            show(do_export(chat_id, parts[2]))
+        return
+
+    if cmd == 'w':
+        if parts[1] == 'list':
+            t, kb = words_view()
+            show(t, kb)
+        elif parts[1] == 'add':
+            WAITING[chat_id] = ('word', None)
+            show('➕ 发我要屏蔽的词 (单行)', [[btn('↩️ 取消', 'w|list')]])
+        elif parts[1] == 'del':
+            ws = SET.get('blockwords') or []
+            i = int(parts[2])
+            if i < len(ws):
+                ws.pop(i)
+                SET['blockwords'] = ws
+                save_settings(SET)
+            t, kb = words_view()
+            show(t, kb)
+        return
+
+    if cmd == 'a':
+        if parts[1] == 'list':
+            t, kb = aliases_view()
+            show(t, kb)
+        elif parts[1] == 'add':
+            WAITING[chat_id] = ('alias', None)
+            show('🔗 格式: 名字 空格 链接\n例: 老王的机场 https://xx/api/v1/client/subscribe?token=abc',
+                 [[btn('↩️ 取消', 'a|list')]])
+        elif parts[1] == 'del':
+            al = SET.get('aliases') or {}
+            al.pop(parts[2], None)
+            SET['aliases'] = al
+            save_settings(SET)
+            t, kb = aliases_view()
+            show(t, kb)
+        return
+
+    if cmd == 's':                       # 搜索入口
+        WAITING[chat_id] = (parts[1], None)
+        tip = ('FOFA 语法示例:\n`domain="example.com"`\n`header="X-Powered-By: Sub-Store"`\n'
+               '`body="subscription-userinfo"`' if parts[1] == 'fofa' else
+               'Quake 语法示例:\n`domain: "example.com"`\n`title: "Sub-Store"`\n'
+               '`body: "subscription-userinfo"`')
+        show(f'🔍 发我 {parts[1].upper()} 查询语句\n\n{tip}',
+             [[btn('↩️ 取消', 'm|main')]])
+        return
+
+    if cmd == 'ts':
+        sub = parts[1] if len(parts) > 1 else 'menu'
+        job = TURN_JOB.get(chat_id) or {}
+        if sub == 'menu':
+            t, kb = turn_menu(chat_id)
+            show(t, kb)
+        elif sub == 'paste':
+            WAITING[chat_id] = ('turn', None)
+            show('📥 发我 IP 列表\n一行一个: `ip:port` 或 `ip`(默认 3478)\n'
+                 '# 开头算注释, 自动去重\n\n也可以直接发 FOFA 导出的 txt 内容',
+                 [[btn('↩️ 取消', 'ts|menu')]])
+        elif sub == 'fofa':
+            if not ((FOFA_EMAIL and FOFA_KEY) or FOFA_PROXY_KEY):
+                show('❌ 未配置 FOFA: 在 .env 填 FOFA_EMAIL / FOFA_KEY\n\n'
+                     '也可以自己粘贴 IP 列表扫。',
+                     [[btn('📥 粘贴 IP 列表', 'ts|paste'), btn('↩️ 返回', 'ts|menu')]])
+                return
+            show('🔍 FOFA 扫 TURN 服务器中…\n(内置语法: coturn / stun / 3478-5349)',
+                 [[btn('↩️ 返回', 'ts|menu')]])
+            do_search(chat_id, 'fofa', TURN_FOFA_Q, auto_turn=True)
+        elif sub == 'last':
+            rows = LAST_ROWS.get(chat_id) or []
+            if not rows:
+                show('❌ 还没有搜索结果，先跑一次 FOFA/Quake 搜索。',
+                     [[btn('↩️ 返回', 'ts|menu')]])
+            else:
+                tg = turn_targets_from_rows(rows)
+                show(f'📋 上次搜索 {len(rows)} 条 → {len(tg)} 个目标\n开始扫描…',
+                     [[btn('↩️ 返回', 'ts|menu')]])
+                start_turn_scan(chat_id, tg, mid)
+        elif sub == 'cfg':
+            p = TURN_PARAMS
+            WAITING[chat_id] = ('turncfg', None)
+            show(f'⚙️ 扫描参数\n扫描并发 -c {p["c"]} · TCPing -p {p["p"]}\n'
+                 f'超时 -pt {p["pt"]} / -t {p["t"]} / -ct {p["ct"]} (秒)\n\n'
+                 '发我新参数, 例:\n`-c 200 -p 800 -pt 3 -t 6 -ct 10`',
+                 [[btn('↩️ 返回', 'ts|menu')]])
+        elif sub == 'res':
+            t, kb = turn_res_view(chat_id)
+            show(t, kb)
+        elif sub == 'doc':
+            if job.get('hits'):
+                send_doc(chat_id, f'turn_results_{time.strftime("%Y%m%d_%H%M%S")}.txt',
+                         turn_doc_body(chat_id), caption=f'TURN 命中 {len(job["hits"])} 个')
+                show('📄 结果文件已发送', [[btn('↩️ 返回', 'ts|menu')]])
+            else:
+                show('没有结果文件，先扫一轮。', [[btn('↩️ 返回', 'ts|menu')]])
+        elif sub == 'rerun':
+            tg = job.get('targets') or []
+            if tg:
+                start_turn_scan(chat_id, tg, mid)
+            else:
+                show('没有上次的目标，重新粘贴列表。', [[btn('↩️ 返回', 'ts|menu')]])
+        return
+
+    if cmd == 'cv':
+        sub = parts[1] if len(parts) > 1 else 'menu'
+        if sub == 'menu':
+            t, kb = cv_menu(chat_id)
+            show(t, kb)
+        elif sub == 'paste':
+            WAITING[chat_id] = ('nodes', None)
+            show('📥 把节点配置整段发我\n\n'
+                 '• 节点链接 (ss/vmess/vless/trojan/hysteria2/tuic…)\n'
+                 '• base64 订阅内容\n'
+                 '• Clash / mihomo YAML\n'
+                 '• Sing-box JSON',
+                 [[btn('↩️ 取消', 'cv|menu')]])
+        elif sub == 'fmt':
+            show('⏳ 生成中…')
+            threading.Thread(target=do_convert, args=(chat_id, parts[2]),
+                             daemon=True).start()
+        elif sub == 'save':
+            nodes = NODES.get(chat_id) or []
+            if not nodes:
+                show('❌ 先发节点配置解析一次。', [[btn('↩️ 节点转换', 'cv|menu')]])
+                return
+            pool = load_pool()
+            before = len(pool)
+            merged, _ = validate_nodes(dedup(pool + nodes))
+            save_pool(merged)
+            show(f'✅ 已存入节点池\n本次 {len(nodes)} 个 · 池内 {len(merged)} 个'
+                 f' (新增 {len(merged) - before})\n\n点「节点池」可整池导出订阅。',
+                 [[btn('📦 看节点池', 'cv|pool'), btn('↩️ 节点转换', 'cv|menu')]])
+        elif sub == 'pool':
+            t, kb = pool_view(chat_id)
+            show(t, kb)
+        elif sub == 'pfmt':
+            show('⏳ 整池生成中…')
+            threading.Thread(target=do_convert,
+                             args=(chat_id, parts[2], load_pool(), 'pool'),
+                             daemon=True).start()
+        elif sub == 'pclear':
+            show('🧹 确认清空整个节点池？',
+                 [[btn('✅ 确认清空', 'cv|pclear2'), btn('↩️ 算了', 'cv|pool')]])
+        elif sub == 'pclear2':
+            save_pool([])
+            t, kb = pool_view(chat_id)
+            show('✅ 已清空\n\n' + t, kb)
+        elif sub == 'up':
+            fmt = parts[2]
+            tag = parts[3] if len(parts) > 3 else 'sub'
+            nodes = load_pool() if tag == 'pool' else (NODES.get(chat_id) or [])
+            spec = FMTS.get(fmt)
+            if not spec or not nodes:
+                show('❌ 没有可上传的内容。', [[btn('↩️ 节点转换', 'cv|menu')]])
+                return
+            ext, label, fn = spec
+            show('☁️ 上传中…')
+            mid2 = mid
+
+            def _up():
+                try:
+                    content = fn(nodes)
+                except Exception as e:
+                    edit(chat_id, mid2, f'❌ 生成失败: {str(e)[:150]}')
+                    return
+                fname = f'{tag}_{fmt}_{time.strftime("%Y%m%d_%H%M%S")}.{ext}'
+                url, err = upload.upload_text(fname, content)
+                if url:
+                    edit(chat_id, mid2,
+                         f'🔗 {label} 订阅直链\n\n{url}\n\n'
+                         f'{len(nodes)} 节点 · 直接粘进客户端订阅栏',
+                         [[btn('↩️ 节点转换', 'cv|menu')]])
+                else:
+                    edit(chat_id, mid2, f'❌ 上传失败: {str(err)[:200]}',
+                         [[btn('↩️ 节点转换', 'cv|menu')]])
+            threading.Thread(target=_up, daemon=True).start()
+        return
+
+    if cmd == 'hv':
+        t, kb = harvest_add(chat_id)
+        show(t, kb)
+        return
+
+# ---------------------------------------------------------------- 消息
+def handle_message(m):
+    chat_id = m['chat']['id']
+    uid = str((m.get('from') or {}).get('id', ''))
+    if ALLOWED_USERS and uid not in ALLOWED_USERS:
+        send(chat_id, f'⛔ 不在白名单。你的 id: {uid}')
+        return
+    text = (m.get('text') or '').strip()
+    if not text:
+        return
+
+    # 命令
+    if text.startswith('/'):
+        cmd = text.split()[0].split('@')[0].lower()
+        args = text[len(text.split()[0]):].strip()
+        if cmd in ('/start', '/menu'):
+            send(chat_id, '👋 点下方按钮操作\n\n' + HELP, main_menu())
+        elif cmd == '/help':
+            send(chat_id, HELP, main_menu())
+        elif cmd in ('/fofa', '/quake'):
+            engine = cmd[1:]
+            if args:
+                do_search(chat_id, engine, args)
+            else:
+                WAITING[chat_id] = (engine, None)
+                send(chat_id, f'🔍 发我 {engine.upper()} 查询语句',
+                     [[btn('↩️ 取消', 'm|main')]])
+        elif cmd == '/id':
+            send(chat_id, f'chat_id: {chat_id}\nuser_id: {uid}')
+        else:
+            send(chat_id, '不认识这个命令，点 /start 看菜单。', main_menu())
+        return
+
+    # 等待输入
+    st = WAITING.get(chat_id)
+    if st:
+        kind, extra = st
+        WAITING.pop(chat_id, None)
+        if kind in ('fofa', 'quake'):
+            do_search(chat_id, kind, text)
+            return
+        if kind == 'turn':
+            tg = turnscan.parse_targets(text)
+            if not tg:
+                send(chat_id, '❌ 没解析出目标。格式: `1.2.3.4:3478` 或 `1.2.3.4`',
+                     [[btn('↩️ 返回', 'ts|menu')]])
+                return
+            start_turn_scan(chat_id, tg)
+            return
+        if kind == 'turncfg':
+            for k in ('c', 'p'):
+                mm = re.search(rf'-{k}\s+(\d+)', text)
+                if mm:
+                    TURN_PARAMS[k] = int(mm.group(1))
+            for k in ('pt', 't', 'ct'):
+                mm = re.search(rf'-{k}\s+([\d.]+)', text)
+                if mm:
+                    TURN_PARAMS[k] = float(mm.group(1))
+            p = TURN_PARAMS
+            send(chat_id, f'✅ 参数已更新\n并发 {p["c"]} · TCPing {p["p"]}\n'
+                          f'超时 {p["pt"]}/{p["t"]}/{p["ct"]}s',
+                 [[btn('🛰 回 TURN 扫描', 'ts|menu')]])
+            return
+        if kind == 'nodes':
+            handle_nodes_text(chat_id, text)
+            return
+        if kind == 'word':
+            ws = SET.get('blockwords') or []
+            for w in re.split(r'[,，\s]+', text):
+                if w and w not in ws:
+                    ws.append(w)
+            SET['blockwords'] = ws
+            save_settings(SET)
+            t, kb = words_view()
+            send(chat_id, '✅ 已添加\n\n' + t, kb)
+            return
+        if kind == 'alias':
+            m2 = re.match(r'(\S+)\s+(https?://\S+)', text)
+            if not m2:
+                send(chat_id, '❌ 格式不对，要: 名字 空格 链接', [[btn('↩️ 返回', 'a|list')]])
+                return
+            al = SET.get('aliases') or {}
+            al[m2.group(1)] = m2.group(2)
+            SET['aliases'] = al
+            save_settings(SET)
+            # 若该 URL 已在库, 顺手改名
+            if m2.group(2) in STORE.d:
+                STORE.rename(m2.group(2), m2.group(1))
+            t, kb = aliases_view()
+            send(chat_id, '✅ 已添加\n\n' + t, kb)
+            return
+        if kind == 'short':
+            s, err = shortlink.shorten(text)
+            if s:
+                SHORTS.add(text, s)
+                send(chat_id, f'✅ 短链:\n{s}', [[btn('🔗 短链列表', 'k|menu')]])
+            else:
+                send(chat_id, f'❌ 生成失败: {err}', [[btn('↩️ 返回', 'k|menu')]])
+            return
+        if kind == 'rename':
+            kind2, idx, url = extra
+            name = text.splitlines()[0][:48]
+            STORE.rename(url, name)
+            t, kb = detail_view(chat_id, kind2, idx)
+            send(chat_id, '✅ 已重命名\n\n' + t, kb)
+            return
+        return
+
+    # 别名回链
+    al = SET.get('aliases') or {}
+    if text in al:
+        send(chat_id, f'🔗 {text}\n{al[text]}')
+        return
+
+    # 裸链接 → 入库
+    urls = extract_urls(text) or ([text] if re.match(r'https?://\S+$', text) else [])
+    urls = [u for u in urls if re.match(r'https?://', u)]
+    if urls:
+        added, dup = [], []
+        for u in urls:
+            ok, why = STORE.add(u)
+            (added if ok else dup).append(u)
+        if not added:
+            send(chat_id, f'ℹ️ 这些已经在库里了 ({len(dup)} 条)',
+                 [[btn('📋 订阅列表', 'l|list|0')]])
+            return
+        msg = send(chat_id, f'➕ 入库 {len(added)} 条，正在查流量…')
+        mid = (msg or {}).get('message_id')
+
+        def _run():
+            lines = []
+            for i, u in enumerate(added, 1):
+                try:
+                    out, _ = refresh_one(chat_id, u)
+                    lines.append(out)
+                except Exception as e:
+                    lines.append(f'❌ {u[:40]}: {str(e)[:60]}')
+                if mid:
+                    edit(chat_id, mid, f'➕ 入库 {len(added)} 条 · 查询 {i}/{len(added)}')
+            txt = '\n'.join(lines)
+            if mid:
+                edit(chat_id, mid, txt[:3800], [[btn('📋 订阅列表', 'l|list|0')],
+                                                [btn('↩️ 主菜单', 'm|main')]])
+            else:
+                send(chat_id, txt[:3800])
+        threading.Thread(target=_run, daemon=True).start()
+        return
+
+    # 节点配置 → 订阅转换 (裸节点链接 / Clash YAML / Sing-box JSON)
+    if (looks_like_links(text) or 'proxies:' in text[:4000]
+            or '"outbounds"' in text[:4000]):
+        handle_nodes_text(chat_id, text)
+        return
+
+    send(chat_id, '没看懂。发订阅链接 / 点菜单按钮 / 或 /help', main_menu())
+
+
+# ---------------------------------------------------------------- 主循环
+def load_state():
+    if os.path.exists(STATE_FILE):
+        try:
+            return json.load(open(STATE_FILE, encoding='utf-8'))
+        except Exception:
+            pass
+    return {}
+
+
+def save_state(st):
+    tmp = STATE_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(st, f)
+    os.replace(tmp, STATE_FILE)
+
+
+def main():
+    if not BOT_TOKEN:
+        print('!! 请设置 TG_BOT_TOKEN (环境变量或 .env)', file=sys.stderr)
+        sys.exit(1)
+    me = api('getMe', {})
+    if me:
+        print(f'[panghubot] 已上线: @{me.get("username")} ({me.get("id")})', flush=True)
+    else:
+        print('[panghubot] getMe 失败，继续…', flush=True)
+    st = load_state()
+    offset = st.get('offset', 0)
+    while True:
+        try:
+            updates = api('getUpdates', {
+                'offset': offset, 'timeout': 50,
+                'allowed_updates': ['message', 'callback_query'],
+            })
+            if not updates:
+                time.sleep(2)
+                continue
+            for u in updates:
+                offset = u['update_id'] + 1
+                try:
+                    if 'message' in u:
+                        handle_message(u['message'])
+                    elif 'callback_query' in u:
+                        cb = u['callback_query']
+                        api('answerCallbackQuery', {'callback_query_id': cb['id']})
+                        handle_callback(cb)
+                except Exception:
+                    traceback.print_exc()
+                st['offset'] = offset
+                save_state(st)
+            print(f'[poll] {time.strftime("%H:%M:%S")} offset={offset}', flush=True)
+        except KeyboardInterrupt:
+            print('[panghubot] bye', flush=True)
+            break
+        except Exception:
+            traceback.print_exc()
+            time.sleep(5)
+
+
+if __name__ == '__main__':
+    main()
