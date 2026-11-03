@@ -8,6 +8,7 @@
 set -u
 RUN_MIN=${RUN_MINUTES:-330}
 API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+UP="https://uploads.github.com/repos/${GITHUB_REPOSITORY}"
 log(){ echo "[runner] $(date -u +%H:%M:%S) $*"; }
 # 自己的输出同时进 Actions 日志与 runner.log（后者每 5 分钟回传 draft，供外部实时看）
 exec > >(tee -a runner.log) 2>&1
@@ -106,9 +107,11 @@ save_asset(){
   [ -f "$2" ] || return 0
   old=$(asset_field "$1" url)
   if [ -n "$old" ]; then gh -X DELETE "$old" > /dev/null; sleep 1; fi
-  curl -sS --max-time 30 -X POST -H "$AUTH" -H "Accept: application/vnd.github+json" \
+  code=$(curl -sS --max-time 40 -X POST -H "$AUTH" -H "Accept: application/vnd.github+json" \
     -H "Content-Type: application/octet-stream" \
-    --data-binary @"$2" "$API/releases/$REL_ID/assets?name=$1" > /dev/null
+    --data-binary @"$2" -o /dev/null -w '%{http_code}' \
+    "$UP/releases/$REL_ID/assets?name=$1")
+  log "上传 $1 -> HTTP $code"
 }
 sync_logs(){ save_asset runner.log runner.log; save_asset bot.log bot.log; }
 : > runner.log 2>/dev/null || true
