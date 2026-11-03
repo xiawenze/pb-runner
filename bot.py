@@ -224,7 +224,8 @@ def sub_line(u, v):
     name = v.get('name') or subman.host_of(u)
     star = '⭐' if v.get('fav') else ''
     nodes = last.get('nodes')
-    parts = [f'{star}{name}']
+    flag = last.get('flag') or ''
+    parts = [f'{star}{flag}{name}'.replace('  ', ' ')] if flag else [f'{star}{name}']
     if nodes:
         parts.append(f'{nodes}节点')
     if last.get('rest_gb') is not None:
@@ -406,10 +407,14 @@ def harvest_add(chat_id):
 # ---------------------------------------------------------------- 刷新/测活
 def refresh_one(chat_id, url, msg_id=None, label=''):
     """拉订阅 → userinfo + 节点数; 有 msg_id 就原地改消息"""
-    text, ui, err = subman.fetch_sub(url)
+    text, ui, meta = subman.fetch_sub(url)
+    err = meta if (ui is None and text is None) else None
+    brand = ''
+    if isinstance(meta, dict):
+        brand = meta.get('brand') or ''
     if err:
         payload = {'nodes': 0, 'rest_gb': None, 'total_gb': None,
-                   'expire': 0, 'err': err}
+                   'expire': 0, 'err': err, 'brand': brand}
         STORE.record(url, payload)
         out = f'❌ {label or subman.host_of(url)} 刷新失败: {err}'
     else:
@@ -426,9 +431,15 @@ def refresh_one(chat_id, url, msg_id=None, label=''):
             'used_gb': ui.get('used_gb') if ui else None,
             'expire': ui.get('expire') if ui else 0,
             'expire_date': ui.get('expire_date') if ui else None,
+            'brand': brand or '',
+            'flag': subman.airport.flag_from_url(url, text or ''),
         }
         STORE.record(url, payload)
-        bits = [f'✅ {label or subman.host_of(url)}']
+        # 首次识别到品牌名 -> 自动把订阅名改成品牌名
+        old_name = (STORE.get(url) or {}).get('name') or ''
+        if brand and (not old_name or old_name == subman.host_of(url)):
+            STORE.rename(url, brand)
+        bits = [f'✅ {label or brand or subman.host_of(url)}']
         bits.append(f'{len(nodes)} 节点')
         if ui and ui.get('total_gb'):
             bits.append(f'剩 {ui["rest_gb"]}G / {ui["total_gb"]}G')
