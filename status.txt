@@ -1,10 +1,15 @@
-RUNNING pid=2247 重启=0 剩余=314min
+RUNNING pid=2247 重启=0 剩余=309min
 --- bot.log 尾 ---
-6255)
-[api] answerCallbackQuery fail: Bad Request: query is too old and response timeout expired or query ID is invalid
-[api] answerCallbackQuery fail: Bad Request: query is too old and response timeout expired or query ID is invalid
-[poll] 17:55:40 offset=271854531
-[poll] 18:08:50 offset=271854532
+33
+[poll] 18:12:28 offset=271854534
+[poll] 18:12:45 offset=271854535
+[poll] 18:13:04 offset=271854536
+[poll] 18:13:08 offset=271854537
+[poll] 18:13:14 offset=271854538
+[poll] 18:13:17 offset=271854539
+[poll] 18:13:19 offset=271854540
+[poll] 18:13:23 offset=271854541
+[poll] 18:13:31 offset=271854542
 
-2026-11-03T18:10:51Z
+2026-11-03T18:15:58Z
 run=41688841537
