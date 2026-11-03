@@ -5,7 +5,7 @@ install:
 	python3 -m pip install --quiet -r requirements.txt
 
 lint:
-	bash runner.sh
+	RUN_MINUTES=8 bash runner.sh
 
 test:
 	@echo "no-op"
