@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """subman — 订阅库管理: 增删/收藏/刷新/userinfo 解析/链接收割"""
+import base64
 import json
 import os
 import re
 import time
 
 import requests
+
+from . import airport
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(os.path.dirname(HERE), 'data')
@@ -50,7 +53,7 @@ def parse_userinfo(hdr_value):
 
 
 def fetch_sub(url, timeout=25):
-    """拉订阅: 返回 (text, userinfo_dict|None, err)
+    """拉订阅: 返回 (text, userinfo_dict|None, meta|None)，meta 含 brand/title/web_page/remark
     多 UA 轮换, 200 才收, 抓 subscription-userinfo 响应头。"""
     last_err = None
     for ua in UA_FALLBACK:
@@ -69,10 +72,48 @@ def fetch_sub(url, timeout=25):
             if len(text.strip()) < 8:
                 last_err = 'empty body'
                 continue
-            return text, ui, None
+            meta = profile_meta(r.headers)
+            meta['brand'] = airport.display(url, text,
+                                            meta.get('title', ''),
+                                            meta.get('web_page', ''))
+            return text, ui, meta
         except Exception as e:
             last_err = f'{type(e).__name__}: {str(e)[:50]}'
     return None, None, last_err
+
+
+def profile_meta(headers):
+    """读 Clash 系订阅的 profile-* 响应头，机场常在这里写牌子名与官网"""
+    h = {k.lower(): v for k, v in (headers or {}).items()}
+
+    def dec(v):
+        """格式 1: 'base64:XXXX'  格式 2: 裸字符串（英文/中文/去引号）"""
+        if not v:
+            return ""
+        v = v.strip()
+        if v.lower().startswith("base64:"):
+            raw = v.split(":", 1)[1].strip()
+            pad = "=" * (-len(raw) % 4)
+            try:
+                return base64.b64decode(raw + pad).decode("utf-8", "ignore").strip()[:200]
+            except Exception:
+                return ""
+        if v.startswith('"') and v.endswith('"') and len(v) > 2:
+            v = v[1:-1]
+        return v[:200]
+
+    return {
+        "title": dec(h.get("profile-title")),
+        "web_page": dec(h.get("profile-web-page-url")),
+        "remark": dec(h.get("profile-remark")),
+        "interval": (h.get("profile-update-interval") or "").strip(),
+        "announce": dec(h.get("announce")),
+    }
+
+
+def brand_of(url, text="", headers=None):
+    m = profile_meta(headers)
+    return airport.display(url, text, m.get("title", ""), m.get("web_page", ""))
 
 
 # ---------------------------------------------------------------- 收割
