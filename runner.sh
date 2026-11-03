@@ -10,20 +10,30 @@ log(){ echo "[runner] $(date -u +%H:%M:%S) $*"; }
 
 # --- 取 GITHUB_TOKEN ---
 GTOKEN=""
-for ref in $(git config --get-regexp '^remote\..*\.url$' 2>/dev/null | awk '{print $2}'); do
-  case "$ref" in
-    https://*@*)
-      GTOKEN=$(echo "$ref" | sed -E 's#https://[^:]+:([^@]+)@.*#\1#')
-      ;;
+# checkout@v3 持久化凭据在 .git/config 的 extraheader 里 (base64 of "x-access-token:TOKEN")
+B64=$(git config --get-all http.https://github.com/.extraheader 2>/dev/null | awk '{print $NF}' | head -1)
+if [ -n "$B64" ]; then
+  DEC=$(echo "$B64" | base64 -d 2>/dev/null || true)
+  case "$DEC" in
+    x-access-token:*) GTOKEN="${DEC#x-access-token:}" ;;
   esac
-  [ -n "$GTOKEN" ] && break
-done
+fi
+# 兜底: remote url 内嵌 / .git-credentials
+if [ -z "$GTOKEN" ]; then
+  for ref in $(git config --get-regexp '^remote\..*\.url$' 2>/dev/null | awk '{print $2}'); do
+    case "$ref" in
+      https://*@*) GTOKEN=$(echo "$ref" | sed -E 's#https://[^:]+:([^@]+)@.*#\1#') ;;
+    esac
+    [ -n "$GTOKEN" ] && break
+  done
+fi
 if [ -z "$GTOKEN" ]; then
   GTOKEN=$(cat "$HOME/.git-credentials" 2>/dev/null | head -1 | sed -E 's#https://[^:]+:([^@]+)@.*#\1#')
 fi
 if [ -z "$GTOKEN" ]; then
   log "!! 拿不到 GITHUB_TOKEN (checkout 未持久化凭据?)"; exit 1
 fi
+log "GITHUB_TOKEN 已提取 (${#GTOKEN} 字符)"
 AUTH="Authorization: Bearer ${GTOKEN}"
 ACCEPT="Accept: application/vnd.github+json"
 gh(){ curl -sS -H "$AUTH" -H "$ACCEPT" "$@"; }
@@ -61,8 +71,8 @@ for pair in "state.json state.json" "subs.json subs.json" "nodepool.json nodepoo
 done
 log "config+state 就绪 ($(wc -c < .env)B .env)"
 
-# --- 跑 bot ---
-python3 -u bot.py > bot.log 2>&1 &
+# --- 跑 bot（输出实时进 Actions 日志 + bot.log） ---
+python3 -u bot.py > >(tee bot.log) 2>&1 &
 BOT=$!
 log "bot pid=$BOT, 跑 ${RUN_MIN} 分钟"
 sleep $((RUN_MIN*60))
