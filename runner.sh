@@ -68,13 +68,22 @@ allr = runs('in_progress') + runs('queued')
 mc = next((r['created_at'] for r in allr if str(r['id'])==mine), '')
 if not mc:
     print(0); sys.exit()
-print(len([r for r in allr if str(r['id'])!=mine and r.get('created_at','') < mc]))
+import datetime
+def age_h(ts):
+    try:
+        return (datetime.datetime.utcnow() - datetime.datetime.strptime(ts, '%Y-%m-%dT%H:%M:%SZ')).total_seconds()/3600.0
+    except Exception:
+        return 99.0
+# 只认 6 小时内的 run，防僵尸 run 永久占位
+print(len([r for r in allr if str(r['id'])!=mine
+           and r.get('created_at','') < mc
+           and age_h(r.get('created_at','')) < 6.0]))
 PY
 )
     [ "${n:-0}" = "0" ] && return 0
     log "等位 (更早 run=$n, 已等 ${waited}s)"
     sleep 90; waited=$((waited+90))
-    [ "$waited" -ge 7200 ] && { log "等位 2h 超时，让位退出"; return 1; }
+    [ "$waited" -ge 1200 ] && { log "等位 20min 超时，强制接棒（TG 侧 409 会兜底）"; return 0; }
   done
 }
 wait_turn || exit 0
