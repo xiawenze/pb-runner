@@ -133,6 +133,8 @@ def harvest_urls(text):
     """从任意文本(搜索结果 body 等)里抽疑似订阅链接"""
     if not text:
         return []
+    import html as _html
+    text = _html.unescape(str(text))
     found = []
     seen = set()
     for m in SUB_URL_RE.finditer(text):
@@ -146,7 +148,30 @@ def harvest_urls(text):
         if u not in seen and SUB_HINT_RE.search(u):
             seen.add(u)
             found.append(u)
-    return found[:50]
+
+    # 清洗 + 有效性校验（滤掉文档示例、空 token、HTML 残留）
+    BAD_HOST = ('example.com', 'github.com', 'githubusercontent.com', 'gitlab.com',
+                'gitee.com', 'jsdelivr', 'unpkg.com', 'localhost', '127.0.0.1',
+                'google.com', 'baidu.com', 'w3.org', 'schema.org', 'npmjs.org',
+                'pypi.org', 'mozilla.org', 'apache.org', 'gnu.org', 'xxx/', 'domain/')
+    out, seen2 = [], set()
+    for u in found:
+        u = u.rstrip('\\,.;:)]}。')
+        if 'token=' in u and '#' in u:
+            u = u.split('#')[0]
+        u = u.rstrip('&')
+        if not u.startswith('http'):
+            continue
+        low = u.lower()
+        if any(b in low for b in BAD_HOST):
+            continue
+        if 'token=' in low and not re.search(r'token=[A-Za-z0-9+/=_\-]{10,}', u):
+            continue
+        if u in seen2 or len(u) > 500:
+            continue
+        seen2.add(u)
+        out.append(u)
+    return out[:50]
 
 
 # ---------------------------------------------------------------- 库
