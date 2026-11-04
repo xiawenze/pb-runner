@@ -1,8 +1,8 @@
-RUNNING pid=2311 重启=0 剩余=240min
+RUNNING pid=2311 重启=0 剩余=235min
 --- bot.log 尾 ---
-t is being made to host 'c3.tihuanxyz.com'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
+onnectionpool.py:1097: InsecureRequestWarning: Unverified HTTPS request is being made to host 'fofa.xiaomochen.tech'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
   warnings.warn(
-[search] quake q=body:"Sub-Store" + body:"/api/public/profiles" + app:"misub" rows=48 total=4109 harvest=4
+[poll] 14:04:09 offset=271854709
 
-2026-11-04T13:58:56Z
+2026-11-04T14:04:12Z
 run=41829384033
