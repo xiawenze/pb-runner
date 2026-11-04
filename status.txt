@@ -1,12 +1,8 @@
-RUNNING pid=2311 重启=0 剩余=251min
+RUNNING pid=2311 重启=0 剩余=245min
 --- bot.log 尾 ---
-cate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
+t is being made to host 'c3.tihuanxyz.com'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
   warnings.warn(
-[poll] 13:40:25 offset=271854697
-[poll] 13:43:49 offset=271854698
-[poll] 13:43:57 offset=271854699
-[poll] 13:47:32 offset=271854700
-[poll] 13:47:40 offset=271854701
+[search] quake q=body:"Sub-Store" + body:"/api/public/profiles" + app:"misub" rows=48 total=4109 harvest=4
 
-2026-11-04T13:48:24Z
+2026-11-04T13:53:39Z
 run=41829384033
