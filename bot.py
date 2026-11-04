@@ -26,6 +26,7 @@ from core import quake
 from core import shortlink
 from core import turnscan
 from core import gen
+from core import realtest
 from core import upload
 from core.alive import fastping
 from core.parse import parse_subscription, stats, looks_like_links, dedup, validate_nodes
@@ -93,24 +94,33 @@ def save_settings(d):
 SET = load_settings()
 
 HELP = (
-    '🛰 PANGHU 风格 · 资产搜索 + 订阅管理 Bot\n\n'
-    '📋 菜单功能:\n'
-    '• FOFA搜索 / Quake搜索 — 发查询语句, 结果导出 txt, 顺手收割订阅链接\n'
-    '• 订阅列表 — 库里全部订阅 (点进去可刷新/测活/收藏/删除)\n'
-    '• 临期列表 — 按到期时间排序, 标注剩几天\n'
-    '• 更新所有 — 全库刷新 userinfo (节点数/剩余流量/到期)\n'
-    '• 导出链接 — 全部/收藏/有额度/存活 四种口径导出 txt\n'
-    '• 收藏列表 / 短链管理 (is.gd·tinyurl) / 排序设置\n'
-    '• 屏蔽词表 — 命中词的行/节点不展示\n'
-    '• 路径对应 — 名字 ↔ URL 映射, 聊天框直接打名字即回链\n'
-    '• 🛰 TURN扫描 — 批量扫 TURN/STUN: TCPing→协议识别→弱口令→中继验证\n'
-    '• 🧩 节点转换 — 粘贴任意节点/订阅/配置 → 转 Clash/V2Ray/Sing-box/Surge/QX/Loon\n\n'
-    '💬 直接发消息也能用:\n'
-    '• 发订阅链接 (可多条) → 自动入库并查流量\n'
-    '• /fofa <语句> 或 /quake <语句> 直接搜\n'
-    '• 发路径对应的别名 → 回对应 URL\n\n'
-    '⚙️ .env 配置: TG_BOT_TOKEN / TG_ALLOWED_USERS / '
-    'FOFA_EMAIL+FOFA_KEY / QUAKE_KEY'
+    '🛰 PANGHU 订阅管家\n'
+    '资产搜索 · 订阅管理 · 节点转换\n'
+    '━━━━━━━━━━━━━━\n\n'
+    '▍搜索\n'
+    '🔍 FOFA 搜索 — 发语句，结果导出 txt，顺手收割订阅\n'
+    '🌐 Quake 搜索 — 360 鹰图视角，资产更全\n'
+    '🛰 TURN 扫描 — TCPing → 协议识别 → 弱口令 → 中继验证\n\n'
+    '▍订阅\n'
+    '📋 订阅列表 — 全部订阅，点进去刷新/测活/收藏/删除\n'
+    '⏳ 临期列表 — 按到期排序，自动标剩几天\n'
+    '⭐ 收藏列表 — 只留常看的\n'
+    '🔄 更新所有 — 全库刷新流量/节点数/到期\n'
+    '🩺 全量巡检 — 逐条真测活 + 死链标记 + 临期提醒\n'
+    '🧹 死链清理 — 一键删掉拉不动/全死的\n'
+    '📤 导出链接 — 全部/收藏/有额度/存活 四种口径\n\n'
+    '▍工具\n'
+    '🧩 节点转换 — 任意节点/订阅/配置 → Clash/V2Ray/Sing-box/Surge/QX/Loon\n'
+    '✂️ 短链管理 — is.gd / tinyurl\n'
+    '🚫 屏蔽词表 — 命中词的行/节点不展示\n'
+    '🔗 路径对应 — 名字 ↔ URL，聊天框打名字即回链\n'
+    '🔀 排序设置 — 到期/流量/节点数/加入时间\n\n'
+    '▍直接发消息\n'
+    '• 订阅链接（可多条）→ 自动入库 + 识别机场名 + 查流量\n'
+    '• /fofa <语句>、/quake <语句>\n'
+    '• 发别名 → 回对应 URL\n'
+    '• 发节点/配置 → 直接转换\n\n'
+    '⚙️ TG_BOT_TOKEN / TG_ALLOWED_USERS / FOFA_PROXY_KEY / QUAKE_KEY'
 )
 
 # ---------------------------------------------------------------- TG API
@@ -170,13 +180,14 @@ def btn(text, data):
 # ---------------------------------------------------------------- 菜单
 def main_menu():
     return [
-        [btn('帮助菜单', 'h|help'), btn('排序设置', 'c|menu')],
-        [btn('FOFA搜索', 's|fofa'), btn('Quake 搜索', 's|quake')],
-        [btn('屏蔽词表', 'w|list'), btn('路径对应', 'a|list')],
-        [btn('收藏列表', 'f|list'), btn('短链管理', 'k|menu')],
-        [btn('导出链接', 'e|menu'), btn('更新所有', 'u|all')],
-        [btn('临期列表', 'p|list'), btn('订阅列表', 'l|list|0')],
-        [btn('🛰 TURN扫描', 'ts|menu'), btn('🧩 节点转换', 'cv|menu')],
+        [btn('❓ 帮助菜单', 'h|help'), btn('🔀 排序设置', 'c|menu')],
+        [btn('🔍 FOFA 搜索', 's|fofa'), btn('🌐 Quake 搜索', 's|quake')],
+        [btn('🚫 屏蔽词表', 'w|list'), btn('🔗 路径对应', 'a|list')],
+        [btn('⭐ 收藏列表', 'f|list'), btn('✂️ 短链管理', 'k|menu')],
+        [btn('📤 导出链接', 'e|menu'), btn('🔄 更新所有', 'u|all')],
+        [btn('⏳ 临期列表', 'p|list'), btn('📋 订阅列表', 'l|list|0')],
+        [btn('🛰 TURN 扫描', 'ts|menu'), btn('🧩 节点转换', 'cv|menu')],
+        [btn('🩺 全量巡检', 'pt|run'), btn('🧹 死链清理', 'pt|clean')],
     ]
 
 
@@ -227,16 +238,18 @@ def sub_line(u, v):
     flag = last.get('flag') or ''
     parts = [f'{star}{flag}{name}'.replace('  ', ' ')] if flag else [f'{star}{name}']
     if nodes:
-        parts.append(f'{nodes}节点')
+        parts.append(f'🧩{nodes}')
+    if last.get('alive'):
+        parts.append(f'✅{last["alive"]}')
     if last.get('rest_gb') is not None:
-        parts.append(f'剩{last["rest_gb"]}G')
+        parts.append(f'💧{last["rest_gb"]}G')
     elif last.get('total_gb'):
-        parts.append('查询失败')
+        parts.append('❓限流')
     if last.get('expire'):
         left = last['expire'] - time.time()
-        parts.append(fmt_left(left))
+        parts.append(f'⏳{fmt_left(left)}')
     elif last:
-        parts.append('永久')
+        parts.append('♾ 永久')
     return ' · '.join(parts)
 
 
@@ -479,6 +492,69 @@ def update_all(chat_id):
     return None, None
 
 
+def _patrol_run(chat_id, mid, urls):
+    """全量巡检: 逐条刷新 + 真测活, 汇总死链/临期"""
+    dead, near, total_alive, report = [], [], 0, []
+    for i, u in enumerate(urls, 1):
+        v = STORE.get(u) or {}
+        nm = v.get('name') or subman.host_of(u)
+        try:
+            text, ui, meta = subman.fetch_sub(u)
+        except Exception as e:
+            text, ui, meta = None, None, {'err': str(e)[:40]}
+        if text is None:
+            dead.append(nm)
+            STORE.record(u, {'err': (meta or {}).get('err', 'err') if isinstance(meta, dict) else 'err',
+                             'alive': 0, 'nodes': 0})
+            report.append('❌ %s 拉取失败' % nm)
+        else:
+            nodes = []
+            try:
+                r = parse_subscription(text)
+                nodes = r[0] if isinstance(r, tuple) else r
+            except Exception:
+                pass
+            real, info = realtest.test_nodes(nodes, sample=25)
+            a = sum(1 for x in real.values() if x) if real else 0
+            best = min([x for x in real.values() if x], default=0)
+            brand = (meta or {}).get('brand', '') if isinstance(meta, dict) else ''
+            payload = {'nodes': len(nodes), 'alive': a, 'best_ms': best,
+                       'rest_gb': (ui or {}).get('rest_gb'),
+                       'total_gb': (ui or {}).get('total_gb'),
+                       'expire': (ui or {}).get('expire') or 0,
+                       'expire_date': (ui or {}).get('expire_date'),
+                       'brand': brand,
+                       'flag': subman.airport.flag_from_url(u, text)}
+            STORE.record(u, payload)
+            total_alive += a
+            if a == 0:
+                dead.append(nm)
+                report.append('💀 %s 全死 (%d 节点)' % (nm, len(nodes)))
+            else:
+                report.append('✅ %s 活 %d/%d 最快 %dms' % (nm, a, len(real), best))
+            exp = payload.get('expire') or 0
+            if exp and 0 < exp - time.time() < 7 * 86400:
+                near.append('%s 到期 %s' % (nm, payload.get('expire_date')))
+        if mid and (i % 2 == 0 or i == len(urls)):
+            try:
+                edit(chat_id, mid, '🩺 巡检中 %d/%d … 活节点 %d' % (i, len(urls), total_alive))
+            except Exception:
+                pass
+
+    head = '🩺 巡检完成 · %d 条订阅 · 活节点 %d' % (len(urls), total_alive)
+    body = '\n'.join(report[:10]) + ('\n…' if len(report) > 10 else '')
+    if near:
+        body += '\n\n⏳ 临期提醒\n' + '\n'.join('· ' + x for x in near[:5])
+    if dead:
+        body += '\n\n💀 死链 %d 条，可点「🧹 死链清理」' % len(dead)
+    if mid:
+        try:
+            edit(chat_id, mid, (head + '\n\n' + body)[:3900],
+                 [[btn('🧹 死链清理', 'pt|clean')], [btn('📋 订阅列表', 'l|list|0')]])
+        except Exception:
+            pass
+
+
 def test_alive(chat_id, url, msg_id=None, kind='l', idx=0):
     """测活: 拉节点 → TCP 快测, 播报进度"""
     text, ui, meta = subman.fetch_sub(url)
@@ -511,13 +587,26 @@ def test_alive(chat_id, url, msg_id=None, kind='l', idx=0):
 
     def _run():
         try:
-            res = fastping(nodes, timeout=2.5, progress=_progress)
-            a, d, un = len(res['alive']), len(res['dead']), len(res['unknown'])
-            STORE.record(url, {'alive': a, 'dead': d, 'nodes': len(nodes),
-                               'checked': int(time.time())})
-            out = (f'📡 {name} 测活完成\n'
-                   f'存活 {a} · 失联 {d} · UDP待定 {un} (共 {len(nodes)})\n'
-                   f'判定方式: TCP 握手 (UDP 协议不误杀)')
+            real, info = realtest.test_nodes(nodes, sample=60, progress=_progress)
+            if info.get('ok') and real:
+                a = sum(1 for v in real.values() if v)
+                best = min([v for v in real.values() if v], default=0)
+                STORE.record(url, {'alive': a, 'dead': len(real) - a, 'nodes': len(nodes),
+                                   'checked': int(time.time()), 'best_ms': best})
+                out = (f'📡 {name} 真测活完成\n'
+                       f'存活 {a} / {len(real)} (抽检)\n'
+                       f'最快 {best}ms · 共 {len(nodes)} 节点\n'
+                       f'判定方式: mihomo 真握手 gstatic/204')
+            else:
+                res = fastping(nodes, timeout=2.5, progress=_progress)
+                a, d, un = len(res['alive']), len(res['dead']), len(res['unknown'])
+                STORE.record(url, {'alive': a, 'dead': d, 'nodes': len(nodes),
+                                   'checked': int(time.time())})
+                why = info.get('err') or 'mihomo 不可用'
+                out = (f'📡 {name} 测活完成 (降级 TCP)\n'
+                       f'存活 {a} · 失联 {d} · UDP待定 {un} (共 {len(nodes)})\n'
+                       f'降级原因: {str(why)[:60]}\n'
+                       f'⚠️ TCP 判定有假阳性，仅供参考')
             if mid:
                 edit(chat_id, mid, out, [[btn('🔄 重测', f't|{kind}|{idx}'), btn('↩️ 返回', 'm|main')]])
             else:
@@ -898,6 +987,32 @@ def handle_callback(cb):
 
     if cmd == 'h' and parts[1] == 'help':
         show(HELP, main_menu())
+        return
+
+    if cmd == 'pt':                      # 巡检 / 死链清理
+        if parts[1] == 'clean':
+            dead = []
+            for u in STORE.urls():
+                v = STORE.get(u) or {}
+                last = v.get('last') or {}
+                if last.get('err') or (last.get('nodes') and last.get('alive') == 0):
+                    dead.append(u)
+            if not dead:
+                show('🧹 没有发现死链', [[btn('↩️ 返回', 'm|main')]])
+                return
+            for u in dead:
+                STORE.remove(u)
+            show('🧹 已清理 %d 条死链\n\n' % len(dead)
+                 + '\n'.join('· ' + d[:46] for d in dead[:8])
+                 + ('\n…' if len(dead) > 8 else ''), main_menu())
+            return
+        # 全量巡检
+        urls = STORE.urls()
+        if not urls:
+            show('库是空的', main_menu())
+            return
+        show('🩺 巡检开始 0/%d' % len(urls))
+        threading.Thread(target=_patrol_run, args=(chat_id, mid, urls), daemon=True).start()
         return
 
     if cmd == 'c':                       # 排序
