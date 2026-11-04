@@ -1,6 +1,6 @@
-RUNNING pid=2292 重启=0 剩余=13min
+RUNNING pid=2292 重启=0 剩余=8min
 --- bot.log 尾 ---
 [panghubot] 已上线: @xwzxxxbot (9092676255)
 
-2026-11-04T00:41:18Z
+2026-11-04T00:46:25Z
 run=41702147519
