@@ -1,3 +1,15 @@
-WAIT 前面3个 run, 已等0s
-2026-11-04T04:13:04Z
-run=41771812676
+RUNNING pid=2430 重启=0 剩余=319min
+--- bot.log 尾 ---
+
+[poll] 04:05:06 offset=271854580
+[poll] 04:05:09 offset=271854581
+[poll] 04:09:41 offset=271854582
+[poll] 04:09:44 offset=271854583
+[search] FAIL fofa platform error
+[poll] 04:13:25 offset=271854584
+[poll] 04:13:27 offset=271854585
+[poll] 04:13:30 offset=271854586
+[search] FAIL fofa platform error
+
+2026-11-04T04:13:54Z
+run=41770742021
