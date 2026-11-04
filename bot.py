@@ -70,6 +70,7 @@ SHORTS = shortlink.ShortStore()
 WAITING = {}          # chat_id -> ('fofa'|'quake'|'word_add'|'alias_add'|'short_new', None)
 LIST_SNAP = {}        # chat_id -> [url,...]  列表页索引快照
 HARVEST = {}          # chat_id -> [url,...]  上次搜索发现的订阅
+HARVEST_DUP = {}      # chat_id -> int  同机场被跳过的条数
 SEARCHING = set()     # 忙标记
 JOBS_LOCK = threading.Lock()
 
@@ -386,11 +387,28 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
                 harvested.extend(subman.harvest_urls(r.get('body') or ''))
                 harvested.extend(subman.harvest_urls(r.get('host') or ''))
             seen, h2 = set(), []
+            have_urls = set(STORE.d.keys())
+            have_roots = set()
+            for u0 in have_urls:
+                r0 = subman.airport.root_label(u0)
+                if r0:
+                    have_roots.add(r0)
+            seen_roots = set(SET.get('seen_roots') or [])
+            have_roots |= seen_roots
+            dup_same = 0
             for u in harvested:
-                if u not in seen and u not in STORE.d:
-                    seen.add(u)
-                    h2.append(u)
+                if u in seen or u in have_urls:
+                    continue
+                seen.add(u)
+                root = subman.airport.root_label(u)
+                if root and root in have_roots:
+                    dup_same += 1      # 同机场，只是换了端口/子域
+                    continue
+                if root:
+                    have_roots.add(root)
+                h2.append(u)
             HARVEST[chat_id] = h2
+            HARVEST_DUP[chat_id] = dup_same
 
             ts = time.strftime('%Y%m%d_%H%M%S')
             tag = 'fofa' if engine == 'fofa' else 'quake'
@@ -404,10 +422,14 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
 
             kb = []
             if h2:
-                kb.append([btn(f'📥 收割订阅 ({len(h2)})', 'hv|go')])
+                kb.append([btn(f'📥 收割新机场 ({len(h2)})', 'hv|go')])
             kb.append([btn('↩️ 主菜单', 'm|main')])
+            extra = ''
+            if dup_same:
+                extra = f'\n🔁 跳过 {dup_same} 条同机场（只是换了端口）'
             send(chat_id, f'{engine.upper()} 完成\n导出 {len(lines)} 条'
-                          + (f'\n发现 {len(h2)} 条疑似订阅链接' if h2 else '\n未发现订阅链接'),
+                          + (f'\n🆕 新机场 {len(h2)} 个' if h2 else '\n没有新机场')
+                          + extra,
                  keyboard=kb)
         except Exception as e:
             msg = str(e)[:300]
@@ -425,12 +447,20 @@ def harvest_add(chat_id):
     if not urls:
         return '没有待收割的链接。', [[btn('↩️ 主菜单', 'm|main')]]
     added = 0
+    roots = set(SET.get('seen_roots') or [])
     for u in urls:
         ok, _ = STORE.add(u)
         if ok:
             added += 1
+            r = subman.airport.root_label(u)
+            if r:
+                roots.add(r)
+    SET['seen_roots'] = sorted(roots)[-500:]
+    save_settings(SET)
     HARVEST.pop(chat_id, None)
-    return (f'✅ 已入库 {added} 条 (跳过重复 {len(urls) - added} 条)\n'
+    dup = HARVEST_DUP.pop(chat_id, 0)
+    return (f'✅ 已入库 {added} 条新机场\n'
+            f'🔁 跳过同机场旧端口 {dup} 条 · 已记 {len(roots)} 个机场到「已见库」\n'
             f'点「更新所有」批量查流量和节点数。',
             [[btn('🔄 更新所有', 'u|all')], [btn('↩️ 主菜单', 'm|main')]])
 
