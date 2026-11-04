@@ -150,6 +150,8 @@ def harvest_urls(text):
             found.append(u)
 
     # 清洗 + 有效性校验（滤掉文档示例、空 token、HTML 残留）
+    PLACEHOLDER = ('your_token', 'yourtoken', 'example', 'placeholder', 'token=...',
+                   'token=xxx', '/sub/test', 'token=test', 'your-token', 'abc123')
     BAD_HOST = ('example.com', 'github.com', 'githubusercontent.com', 'gitlab.com',
                 'gitee.com', 'jsdelivr', 'unpkg.com', 'localhost', '127.0.0.1',
                 'google.com', 'baidu.com', 'w3.org', 'schema.org', 'npmjs.org',
@@ -164,6 +166,8 @@ def harvest_urls(text):
             continue
         low = u.lower()
         if any(b in low for b in BAD_HOST):
+            continue
+        if any(b in low for b in PLACEHOLDER):
             continue
         if 'token=' in low and not re.search(r'token=[A-Za-z0-9+/=_\-]{10,}', u):
             continue
