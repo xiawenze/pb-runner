@@ -1,3 +1,14 @@
-WAIT 前面1个 run, 已等124s
-2026-11-04T03:54:22Z
-run=41769714620
+RUNNING pid=2479 重启=0 剩余=304min
+--- bot.log 尾 ---
+hubot] 已上线: @xwzxxxbot (9092676255)
+[poll] 03:50:14 offset=271854559
+[poll] 03:50:18 offset=271854560
+[poll] 03:50:21 offset=271854561
+[poll] 03:53:30 offset=271854562
+[poll] 03:54:27 offset=271854563
+[poll] 03:54:30 offset=271854564
+[poll] 03:54:34 offset=271854565
+[poll] 03:54:38 offset=271854566
+
+2026-11-04T03:54:45Z
+run=41767293312
