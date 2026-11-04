@@ -1,7 +1,8 @@
-RUNNING pid=2240 重启=0 剩余=324min
+RUNNING pid=2240 重启=0 剩余=319min
 --- bot.log 尾 ---
-[cmd] setMyCommands ok
-[panghubot] 已上线: @xwzxxxbot (9092676255)
+est is being made to host '85.209.129.60'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
+  warnings.warn(
+[search] fofa q=body="SUB_STORE_FRONTEND_BACKEND_PATH" + header="X-Powered-B rows=397 total=2096 harvest=58
 
-2026-11-04T05:29:20Z
+2026-11-04T05:34:26Z
 run=41778904240
