@@ -215,3 +215,53 @@ def resolve_servers(nodes, workers=6):
                 n["server"] = ip
         out.append(n)
     return out
+
+
+def verify_subs(urls, per_sub=4, timeout_ms=4000, ready_wait=180):
+    """对一批订阅地址做「拉取 + 抽节点真测」，返回 {url: {'nodes':n,'alive':a,'best':ms,'err':str}}
+
+    一次 mihomo 启动测完全部，比一条一条测快得多。
+    """
+    from .parse import parse_subscription
+    import requests
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _fetch(u):
+        try:
+            r = requests.get(u, timeout=15, verify=False, allow_redirects=True,
+                             headers={'User-Agent': 'clash-verge/v1.6.0'})
+            if r.status_code != 200 or len((r.text or '').strip()) < 20:
+                return u, [], 'HTTP %s' % r.status_code
+            res = parse_subscription(r.text)
+            nodes = res[0] if isinstance(res, tuple) else res
+            return u, nodes, ''
+        except Exception as e:
+            return u, [], type(e).__name__
+
+    fetched = []
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        fetched = list(ex.map(_fetch, urls))
+
+    pool, owner = [], {}
+    for u, nodes, err in fetched:
+        good = [n for n in nodes if n.get('type') in OK_TYPES][:per_sub]
+        for i, n in enumerate(good):
+            n2 = dict(n)
+            name = 'v%03d' % len(pool)
+            n2['name'] = name
+            owner[name] = u
+            pool.append(n2)
+
+    result = {}
+    for u, nodes, err in fetched:
+        result[u] = {'nodes': len([n for n in nodes if n.get('type') in OK_TYPES]),
+                     'alive': 0, 'best': 0, 'err': err}
+    if pool:
+        real, info = test_nodes(pool, timeout_ms=timeout_ms, ready_wait=ready_wait)
+        for nm, d in (real or {}).items():
+            u = owner.get(nm)
+            if u and d:
+                result[u]['alive'] += 1
+                if not result[u]['best'] or d < result[u]['best']:
+                    result[u]['best'] = d
+    return result
