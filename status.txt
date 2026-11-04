@@ -1,3 +1,6 @@
-RUNNING bot 启动中
-2026-11-04T02:20:45Z
+RUNNING pid=2509 重启=0 剩余=324min
+--- bot.log 尾 ---
+[panghubot] 已上线: @xwzxxxbot (9092676255)
+
+2026-11-04T02:25:46Z
 run=41759507205
