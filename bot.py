@@ -96,6 +96,19 @@ def save_settings(d):
 
 SET = load_settings()
 
+BOT_COMMANDS = [
+    ('start', '主菜单 / 全部按钮'),
+    ('fofa', 'FOFA 搜索（可带语句）'),
+    ('quake', 'Quake 搜索（可带语句）'),
+    ('list', '订阅列表'),
+    ('patrol', '全量巡检（真测活 + 死链）'),
+    ('clean', '死链清理'),
+    ('update', '更新所有订阅的流量/节点'),
+    ('export', '导出链接（全部/有额度/存活）'),
+    ('id', '查看 chat_id / user_id'),
+    ('help', '帮助'),
+]
+
 FOFA_PRESETS = [
     ('📡 订阅泄漏(带token) ⭐', 'body="/api/v1/client/subscribe?token="'),
     ('🛰 Sub-Store 后端', 'header="X-Powered-By: Sub-Store"'),
@@ -1540,6 +1553,34 @@ def handle_message(m):
                      [[btn('↩️ 取消', 'm|main')]])
         elif cmd == '/id':
             send(chat_id, f'chat_id: {chat_id}\nuser_id: {uid}')
+        elif cmd in ('/list', '/subs'):
+            t, kb = list_view(chat_id, 'l', 0)
+            send(chat_id, t, kb)
+        elif cmd == '/patrol':
+            urls = STORE.urls()
+            if not urls:
+                send(chat_id, '库是空的，先发订阅链接。', main_menu())
+            else:
+                msg = send(chat_id, '🩺 巡检开始 0/%d' % len(urls))
+                threading.Thread(target=_patrol_run, args=(chat_id, (msg or {}).get('message_id'), urls),
+                                 daemon=True).start()
+        elif cmd == '/clean':
+            dead = [u for u in STORE.urls()
+                    if (STORE.get(u) or {}).get('last', {}).get('err')
+                    or ((STORE.get(u) or {}).get('last', {}).get('nodes')
+                        and (STORE.get(u) or {}).get('last', {}).get('alive') == 0)]
+            if not dead:
+                send(chat_id, '🧹 没有死链', main_menu())
+            else:
+                for u in dead:
+                    STORE.remove(u)
+                send(chat_id, '🧹 已清理 %d 条死链' % len(dead), main_menu())
+        elif cmd == '/update':
+            t, kb = update_all(chat_id)
+            send(chat_id, t, kb)
+        elif cmd == '/export':
+            t, kb = export_menu()
+            send(chat_id, t, kb)
         else:
             send(chat_id, '不认识这个命令，点 /start 看菜单。', main_menu())
         return
@@ -1689,6 +1730,12 @@ def main():
     if not BOT_TOKEN:
         print('!! 请设置 TG_BOT_TOKEN (环境变量或 .env)', file=sys.stderr)
         sys.exit(1)
+    try:
+        r = api('setMyCommands', {'commands': [{'command': c, 'description': d}
+                                               for c, d in BOT_COMMANDS]})
+        print('[cmd] setMyCommands', 'ok' if r else 'fail', flush=True)
+    except Exception as _e:
+        print('[cmd] setMyCommands 失败', _e, flush=True)
     me = api('getMe', {})
     if me:
         print(f'[panghubot] 已上线: @{me.get("username")} ({me.get("id")})', flush=True)
