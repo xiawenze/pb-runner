@@ -1,4 +1,4 @@
-RUNNING pid=2507 重启=0 剩余=324min
+RUNNING pid=2507 重启=0 剩余=319min
 --- bot.log 尾 ---
 tion is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
   warnings.warn(
@@ -7,5 +7,5 @@ tion is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced
 [poll] 04:36:54 offset=271854623
 [poll] 04:36:57 offset=271854624
 
-2026-11-04T04:40:10Z
+2026-11-04T04:45:15Z
 run=41773848070
