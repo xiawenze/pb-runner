@@ -95,7 +95,7 @@ def save_settings(d):
 SET = load_settings()
 
 FOFA_PRESETS = [
-    ('📡 订阅端点+token', 'body="/api/v1/client/subscribe?token="'),
+    ('📡 订阅泄漏(带token) ⭐', 'body="/api/v1/client/subscribe?token="'),
     ('🛰 Sub-Store 后端', 'header="X-Powered-By: Sub-Store"'),
     ('🧭 V2Board 面板', 'body="/api/v1/guest/comm/config"'),
     ('🔮 MiSub 中台', 'body="/api/public/profiles"'),
@@ -106,10 +106,11 @@ FOFA_PRESETS = [
 ]
 
 QUAKE_PRESETS = [
+    ('📡 订阅泄漏(带token) ⭐', 'body:"/api/v1/client/subscribe?token="'),
     ('🧭 V2Board 面板', 'app:"v2board"'),
-    ('📡 订阅端点', 'body:"/api/v1/client/subscribe"'),
+    ('🌐 Sub-Store 后端', 'body:"Sub-Store"'),
     ('🛰 TURN/STUN', 'service:"stun"'),
-    ('🌐 Sub-Store', 'body:"Sub-Store"'),
+    ('🔑 后台登录页', 'title:"登录" AND body:"password"'),
 ]
 
 HELP = (
@@ -370,6 +371,18 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
                 res = quake.search(QUAKE_KEY, q, size=QUAKE_SIZE)
 
             rows = res['rows']
+            TOOL_KW = ('订阅转换', '订阅工具', '转换工具', '替换工具', '测速', '中转', '工作台',
+                       '同步', '镜像', '生成器', '订阅管理', '在线工具', 'SubReplay',
+                       'Sub Sync', 'Sub-Store')
+            tool_cnt = 0
+            kept = []
+            for r0 in rows:
+                ttl = (r0.get('title') or '') + ' ' + (r0.get('host') or '')
+                if any(k.lower() in ttl.lower() for k in TOOL_KW):
+                    tool_cnt += 1
+                    continue
+                kept.append(r0)
+            rows = kept
             LAST_ROWS[chat_id] = rows
             if auto_turn:
                 tg = turn_targets_from_rows(rows)
@@ -434,6 +447,8 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
             extra = ''
             if dup_same:
                 extra = f'\n🔁 跳过 {dup_same} 条同机场（只是换了端口）'
+            if tool_cnt:
+                extra += '\n🧰 过滤工具站 %d 条（订阅转换/测速/中转）' % tool_cnt
             send(chat_id, f'{engine.upper()} 完成\n导出 {len(lines)} 条'
                           + (f'\n🆕 新机场 {len(h2)} 个' if h2 else '\n没有新机场')
                           + extra,
