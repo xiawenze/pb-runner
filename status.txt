@@ -1,8 +1,10 @@
-RUNNING pid=2311 重启=0 剩余=235min
+RUNNING pid=2311 重启=0 剩余=230min
 --- bot.log 尾 ---
-onnectionpool.py:1097: InsecureRequestWarning: Unverified HTTPS request is being made to host 'fofa.xiaomochen.tech'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
+xiaomochen.tech'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
   warnings.warn(
 [poll] 14:04:09 offset=271854709
+[search] FAIL fofa local variable 'q' referenced before assignment
+[poll] 14:04:14 offset=271854710
 
-2026-11-04T14:04:12Z
+2026-11-04T14:09:29Z
 run=41829384033
