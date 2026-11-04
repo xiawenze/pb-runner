@@ -26,6 +26,7 @@ from core import quake
 from core import shortlink
 from core import turnscan
 from core import gen
+from core import harvest
 from core import realtest
 from core import upload
 from core.alive import fastping
@@ -71,6 +72,7 @@ WAITING = {}          # chat_id -> ('fofa'|'quake'|'word_add'|'alias_add'|'short
 LIST_SNAP = {}        # chat_id -> [url,...]  列表页索引快照
 HARVEST = {}          # chat_id -> [url,...]  上次搜索发现的订阅
 HARVEST_DUP = {}      # chat_id -> int  同机场被跳过的条数
+HARVEST_DEAD = {}     # chat_id -> int  真测后被丢弃的死链数
 SEARCHING = set()     # 忙标记
 JOBS_LOCK = threading.Lock()
 
@@ -396,6 +398,16 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
 
             # 收割订阅链接（平台不返回正文时，自己抓首页）
             harvested = []
+            # —— 后端探测：Sub-Store /api/subs 与 MiSub，命中率远高于网页抓
+            try:
+                import concurrent.futures as _cf2
+                hosts = [str(r0.get('host') or '') for r0 in rows[:16] if r0.get('host')]
+                if hosts:
+                    with _cf2.ThreadPoolExecutor(max_workers=8) as _ex2:
+                        for got, note in _ex2.map(harvest.probe_host, hosts):
+                            harvested.extend(got)
+            except Exception as _e:
+                print('[harvest] 后端探测失败', _e, flush=True)
             for r in rows:
                 harvested.extend(subman.harvest_urls(r.get('body') or ''))
                 harvested.extend(subman.harvest_urls(r.get('host') or ''))
@@ -446,8 +458,59 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
                 if root:
                     have_roots.add(root)
                 h2.append(u)
+            # —— 真测筛选：只留有活节点的（最多验 8 条，样本 4 节点/条）
+            verified, dropped = [], 0
+            if h2:
+                try:
+                    import concurrent.futures as _cf3
+
+                    def _fetch_nodes(u0):
+                        try:
+                            t0, _ui, _m = subman.fetch_sub(u0, timeout=12)
+                            if not t0:
+                                return u0, []
+                            rr = parse_subscription(t0)
+                            nn = rr[0] if isinstance(rr, tuple) else rr
+                            return u0, nn[:4]
+                        except Exception:
+                            return u0, []
+
+                    cand = h2[:8]
+                    with _cf3.ThreadPoolExecutor(max_workers=6) as _ex3:
+                        fetched = list(_ex3.map(_fetch_nodes, cand))
+                    pool, owner = [], {}
+                    for u0, nn in fetched:
+                        if not nn:
+                            dropped += 1
+                            continue
+                        for i, n0 in enumerate(nn):
+                            n1 = dict(n0)
+                            n1['name'] = '%d_%d' % (pool.__len__(), i)
+                            owner[n1['name']] = u0
+                            pool.append(n1)
+                    if pool:
+                        real2, info2 = realtest.test_nodes(pool, timeout_ms=3500, ready_wait=150)
+                        alive_of = {}
+                        for nm, d in (real2 or {}).items():
+                            if d:
+                                u0 = owner.get(nm)
+                                if u0:
+                                    alive_of[u0] = alive_of.get(u0, 0) + 1
+                        for u0, _nn in fetched:
+                            if alive_of.get(u0):
+                                verified.append(u0)
+                            elif u0 in [x for x, _ in fetched]:
+                                dropped += 1
+                except Exception as _e:
+                    print('[harvest] 真测筛选失败', _e, flush=True)
+                    verified = h2[:8]
+            if verified:
+                h2 = verified
+                HARVEST_DUP[chat_id] = dup_same
+            else:
+                HARVEST_DUP[chat_id] = dup_same
             HARVEST[chat_id] = h2
-            HARVEST_DUP[chat_id] = dup_same
+            HARVEST_DEAD[chat_id] = dropped
 
             ts = time.strftime('%Y%m%d_%H%M%S')
             tag = 'fofa' if engine == 'fofa' else 'quake'
@@ -474,7 +537,11 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
             if dup_same:
                 extra = f'\n🔁 跳过 {dup_same} 条同机场（只是换了端口）'
             if tool_cnt:
-                extra += '\n🧰 过滤工具站 %d 条（订阅转换/测速/中转）' % tool_cnt
+                extra += '\n🧰 过滤工具站 %d 条（订阅转换/测速/中转）'
+            extra = extra % tool_cnt if tool_cnt else extra
+            dcount = HARVEST_DEAD.get(chat_id, 0)
+            if dcount:
+                extra += '\n🔬 真测淘汰死链 %d 条（只留实测有活节点的）' % dcount
             send(chat_id, f'{engine.upper()} 完成\n导出 {len(lines)} 条'
                           + (f'\n🆕 新机场 {len(h2)} 个' if h2 else '\n没有新机场')
                           + extra,
