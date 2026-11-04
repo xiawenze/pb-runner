@@ -1,7 +1,3 @@
-RUNNING pid=2240 重启=0 剩余=253min
---- bot.log 尾 ---
-4/lib/python3.9/site-packages/urllib3/connectionpool.py:1097: InsecureRequestWarning: Unverified HTTPS request is being made to host '62.234.171.210'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
-  warnings.warn(
-
-2026-11-04T06:40:44Z
-run=41778904240
+STARTED
+2026-11-04T06:43:09Z
+run=41787367969
