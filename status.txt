@@ -1,15 +1,15 @@
-RUNNING pid=2453 重启=0 剩余=308min
+RUNNING pid=2453 重启=0 剩余=303min
 --- bot.log 尾 ---
-34
-[poll] 14:28:24 offset=271854735
-[poll] 14:28:30 offset=271854736
-[poll] 14:28:33 offset=271854737
-[poll] 14:28:38 offset=271854738
-[poll] 14:29:21 offset=271854739
-[poll] 14:29:25 offset=271854740
+40
 [poll] 14:29:27 offset=271854741
 [poll] 14:29:31 offset=271854742
 [poll] 14:29:35 offset=271854743
+[poll] 14:34:41 offset=271854744
+[poll] 14:34:47 offset=271854745
+[poll] 14:37:35 offset=271854746
+[poll] 14:37:41 offset=271854747
+[poll] 14:37:52 offset=271854748
+[poll] 14:38:02 offset=271854749
 
-2026-11-04T14:33:42Z
+2026-11-04T14:38:56Z
 run=41844822291
