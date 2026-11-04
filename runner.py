@@ -93,6 +93,38 @@ def report(msg):
         log('report fail:', e)
 
 
+# ---------- 备好 mihomo（真测活要用）----------
+MIHOMO_URL = ('https://github.com/MetaCubeX/mihomo/releases/download/'
+              'v1.19.2/mihomo-linux-amd64-v1.19.2.gz')
+
+
+def ensure_mihomo():
+    import gzip
+    import shutil
+    bin_path = os.path.join(os.getcwd(), 'mihomo')
+    if os.path.exists(bin_path) and os.access(bin_path, os.X_OK):
+        return bin_path
+    try:
+        r = requests.get(MIHOMO_URL, timeout=120)
+        if r.status_code != 200:
+            log('mihomo 下载失败 HTTP', r.status_code)
+            return ''
+        with open('mihomo.gz', 'wb') as f:
+            f.write(r.content)
+        with gzip.open('mihomo.gz', 'rb') as fin, open(bin_path, 'wb') as fout:
+            shutil.copyfileobj(fin, fout)
+        os.chmod(bin_path, 0o755)
+        log('mihomo 就绪', os.path.getsize(bin_path), 'B')
+        return bin_path
+    except Exception as e:
+        log('mihomo 准备失败', e)
+        return ''
+
+
+MIHOMO = ensure_mihomo()
+if MIHOMO:
+    os.environ['MIHOMO_BIN'] = MIHOMO
+
 log(f'token ok ({len(TOKEN)} chars) repo={REPO} run={RUN_ID} min={RUN_MIN}')
 report('STARTED')
 
