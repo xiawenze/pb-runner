@@ -653,15 +653,27 @@ def harvest_add(chat_id):
             r = res.get(u) or {}
             nm = (STORE.get(u) or {}).get('name') or subman.host_of(u)
             a, n = r.get('alive', 0), r.get('nodes', 0)
+            brand, flag = r.get('brand') or '', r.get('flag') or ''
+            if brand and (not nm or nm == subman.host_of(u)):
+                STORE.rename(u, brand)
+                nm = brand
+            base = {'nodes': n, 'checked': int(time.time()),
+                    'brand': brand, 'flag': flag,
+                    'rest_gb': r.get('rest_gb'), 'total_gb': r.get('total_gb'),
+                    'expire': r.get('expire') or 0,
+                    'expire_date': r.get('expire_date')}
             if a:
                 alive_n += 1
-                STORE.record(u, {'nodes': n, 'alive': a, 'best_ms': r.get('best'),
-                                 'checked': int(time.time())})
-                lines.append(f'✅ {nm[:22]} · {n}节点 · 活{a} · 最快{r.get("best")}ms')
+                STORE.record(u, dict(base, alive=a, best_ms=r.get('best')))
+                bits = [f'✅ {nm[:20]}', f'{n}节点', f'活{a}']
+                if r.get('total_gb'):
+                    bits.append(f'剩{r["rest_gb"]}/{r["total_gb"]}G')
+                if r.get('expire_date'):
+                    bits.append(f'到{r["expire_date"]}')
+                lines.append(' · '.join(bits))
             else:
-                STORE.record(u, {'nodes': n, 'alive': 0, 'checked': int(time.time()),
-                                 'err': r.get('err') or '无活节点'})
-                lines.append(f'💀 {nm[:22]} · {n}节点 · 全死{r.get("err") and " (" + r["err"] + ")" or ""}')
+                STORE.record(u, dict(base, alive=0, err=r.get('err') or '无活节点'))
+                lines.append(f'💀 {nm[:20]} · {n}节点 · 全死{r.get("err") and " (" + r["err"] + ")" or ""}')
         head = f'🔬 验活完成：{alive_n}/{len(new_urls)} 条有活节点'
         body = '\n'.join(lines[:10]) + ('\n…' if len(lines) > 10 else '')
         if mid:
