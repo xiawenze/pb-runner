@@ -721,7 +721,7 @@ def harvest_add(chat_id):
 
 
 # ---------------------------------------------------------------- 刷新/测活
-def refresh_one(chat_id, url, msg_id=None, label=''):
+def refresh_one(chat_id, url, msg_id=None, label='', with_nodes=False):
     """拉订阅 → userinfo + 节点数; 有 msg_id 就原地改消息"""
     text, ui, meta = subman.fetch_sub(url)
     err = meta if (ui is None and text is None) else None
@@ -764,8 +764,14 @@ def refresh_one(chat_id, url, msg_id=None, label=''):
         if not ui:
             bits.append('(无 userinfo)')
         out = ' · '.join(bits)
+    if with_nodes and nodes:
+        preview = '\n'.join('%d. %s' % (i, n.get('name') or ('%s:%s' % (n.get('server'), n.get('port'))))
+                            for i, n in enumerate(nodes[:60], 1))
+        if len(nodes) > 60:
+            preview += '\n… 还有 %d 个' % (len(nodes) - 60)
+        out = esc(out) + '\n\n📜 节点清单（点开看）\n' + quote_block(preview)
     if msg_id:
-        edit(chat_id, msg_id, out, [[btn('↩️ 主菜单', 'm|main')]])
+        edit(chat_id, msg_id, out, [[btn('↩️ 主菜单', 'm|main')]], raw=with_nodes)
     return out, payload
 
 
@@ -1418,8 +1424,10 @@ def handle_callback(cb):
             show('🔄 刷新中…')
             def _run():
                 try:
-                    out, _ = refresh_one(chat_id, u)
-                    edit(chat_id, mid, out, [[btn('↩️ 返回', f'{parts[1]}|list|0')]])
+                    out, _ = refresh_one(chat_id, u, with_nodes=True)
+                    edit(chat_id, mid, out,
+                         [[btn('📡 测活', f't|{parts[1]}|{idx}'), btn('📤 活节点', f'an|{parts[1]}|{idx}')],
+                          [btn('↩️ 返回', f'{parts[1]}|list|0')]], raw=True)
                 except Exception as e:
                     edit(chat_id, mid, f'❌ {str(e)[:150]}')
             threading.Thread(target=_run, daemon=True).start()
@@ -1895,21 +1903,21 @@ def handle_message(m):
         mid = (msg or {}).get('message_id')
 
         def _run():
-            lines = []
+            lines, html_parts = [], []
             for i, u in enumerate(added, 1):
                 try:
-                    out, _ = refresh_one(chat_id, u)
+                    out, _ = refresh_one(chat_id, u, with_nodes=(len(added) == 1))
                     lines.append(out)
                 except Exception as e:
                     lines.append(f'❌ {u[:40]}: {str(e)[:60]}')
                 if mid:
                     edit(chat_id, mid, f'➕ 入库 {len(added)} 条 · 查询 {i}/{len(added)}')
             txt = '\n'.join(lines)
+            kb = [[btn('📋 订阅列表', 'l|list|0')], [btn('↩️ 主菜单', 'm|main')]]
             if mid:
-                edit(chat_id, mid, txt[:3800], [[btn('📋 订阅列表', 'l|list|0')],
-                                                [btn('↩️ 主菜单', 'm|main')]])
+                edit(chat_id, mid, txt[:3900], kb, raw=(len(added) == 1))
             else:
-                send(chat_id, txt[:3800])
+                send(chat_id, txt[:3900], kb, raw=(len(added) == 1))
         threading.Thread(target=_run, daemon=True).start()
         return
 
