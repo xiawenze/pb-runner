@@ -231,19 +231,26 @@ def verify_subs(urls, per_sub=4, timeout_ms=4000, ready_wait=180):
             r = requests.get(u, timeout=15, verify=False, allow_redirects=True,
                              headers={'User-Agent': 'clash-verge/v1.6.0'})
             if r.status_code != 200 or len((r.text or '').strip()) < 20:
-                return u, [], 'HTTP %s' % r.status_code
+                return u, [], 'HTTP %s' % r.status_code, {}, ''
+            from .subman import parse_userinfo, profile_meta
+            from . import airport
+            ui = parse_userinfo(r.headers.get('subscription-userinfo')) or {}
+            meta = profile_meta(r.headers)
+            brand = airport.display(u, r.text[:2000], meta.get('title', ''),
+                                    meta.get('web_page', ''))
+            flag = airport.flag_from_url(u, r.text[:1500])
             res = parse_subscription(r.text)
             nodes = res[0] if isinstance(res, tuple) else res
-            return u, nodes, ''
+            return u, nodes, '', ui, brand + '|' + flag
         except Exception as e:
-            return u, [], type(e).__name__
+            return u, [], type(e).__name__, {}, ''
 
     fetched = []
     with ThreadPoolExecutor(max_workers=6) as ex:
         fetched = list(ex.map(_fetch, urls))
 
     pool, owner = [], {}
-    for u, nodes, err in fetched:
+    for u, nodes, _err, _ui, _bf in fetched:
         good = [n for n in nodes if n.get('type') in OK_TYPES][:per_sub]
         for i, n in enumerate(good):
             n2 = dict(n)
@@ -253,9 +260,14 @@ def verify_subs(urls, per_sub=4, timeout_ms=4000, ready_wait=180):
             pool.append(n2)
 
     result = {}
-    for u, nodes, err in fetched:
+    for u, nodes, err, ui, bf in fetched:
         result[u] = {'nodes': len([n for n in nodes if n.get('type') in OK_TYPES]),
-                     'alive': 0, 'best': 0, 'err': err}
+                     'alive': 0, 'best': 0, 'err': err,
+                     'rest_gb': ui.get('rest_gb'), 'total_gb': ui.get('total_gb'),
+                     'expire': ui.get('expire') or 0,
+                     'expire_date': ui.get('expire_date'),
+                     'brand': (bf.split('|')[0] or '').strip(),
+                     'flag': (bf.split('|')[1] if '|' in bf else '').strip()}
     if pool:
         real, info = test_nodes(pool, timeout_ms=timeout_ms, ready_wait=ready_wait)
         for nm, d in (real or {}).items():
