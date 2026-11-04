@@ -1,8 +1,10 @@
-RUNNING pid=2224 重启=0 剩余=319min
+RUNNING pid=2224 重启=0 剩余=314min
 --- bot.log 尾 ---
-d Request: query is too old and response timeout expired or query ID is invalid
-[api] editMessageText fail: Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message
+xt fail: Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message
 [poll] 04:59:35 offset=271854633
+[poll] 05:03:13 offset=271854634
+[poll] 05:03:35 offset=271854635
+[poll] 05:03:59 offset=271854636
 
-2026-11-04T04:59:47Z
+2026-11-04T05:04:53Z
 run=41775289224
