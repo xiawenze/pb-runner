@@ -258,6 +258,9 @@ while time.time() < end:
             log('重启过多，收尾')
             break
     if time.time() - last_sync >= 300:
+        # 状态文件也跟着日志一起回传，防 runner 中途死掉丢库
+        for _f in ('state', 'subs', 'nodepool', 'settings'):
+            upload(_f + '.json', 'data/' + _f + '.json')
         tail = ''
         try:
             tail = open('bot.log', encoding='utf-8', errors='ignore').read()[-300:]
