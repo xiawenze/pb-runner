@@ -394,11 +394,37 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
                      else quake.render_rows(rows, blockwords))
             body = '\n'.join(lines) if lines else '(无结果)'
 
-            # 收割订阅链接
+            # 收割订阅链接（平台不返回正文时，自己抓首页）
             harvested = []
             for r in rows:
                 harvested.extend(subman.harvest_urls(r.get('body') or ''))
                 harvested.extend(subman.harvest_urls(r.get('host') or ''))
+            if len(set(harvested)) < 3 and rows:
+                import concurrent.futures as _cf
+
+                def _grab(r0):
+                    host = str(r0.get('host') or '').strip()
+                    port = str(r0.get('port') or '')
+                    if not host:
+                        return []
+                    if not host.startswith(('http://', 'https://')):
+                        scheme = 'https' if port in ('443', '8443') else 'http'
+                        host = scheme + '://' + host
+                        if port and port not in ('80', '443'):
+                            host += ':' + port
+                    try:
+                        rr = requests.get(host, timeout=6, verify=False,
+                                          headers={'User-Agent': 'clash-verge/v1.6.0'})
+                        return subman.harvest_urls((rr.text or '')[:200000])
+                    except Exception:
+                        return []
+
+                try:
+                    with _cf.ThreadPoolExecutor(max_workers=8) as _ex:
+                        for got in _ex.map(_grab, rows[:12]):
+                            harvested.extend(got)
+                except Exception:
+                    pass
             seen, h2 = set(), []
             have_urls = set(STORE.d.keys())
             have_roots = set()
