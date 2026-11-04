@@ -213,6 +213,16 @@ def btn(text, data):
 
 
 # ---------------------------------------------------------------- 菜单
+def _toggle(label, key):
+    on = bool(SET.get(key, False))
+    return btn(('✅ ' if on else '⬜ ') + label, 'cfg|' + key)
+
+
+def _mode_hint():
+    t = '全部入库' if not SET.get('filter_tool') and not SET.get('verify_harvest') else '有筛选'
+    return t + '（点按钮可切换）'
+
+
 def main_menu():
     return [
         [btn('❓ 帮助菜单', 'h|help'), btn('🔀 排序设置', 'c|menu')],
@@ -391,13 +401,15 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
                        'Sub Sync', 'Sub-Store')
             tool_cnt = 0
             kept = []
-            for r0 in rows:
+            do_filter = bool(SET.get('filter_tool', False))
+            for r0 in (rows if do_filter else []):
                 ttl = (r0.get('title') or '') + ' ' + (r0.get('host') or '')
                 if any(k.lower() in ttl.lower() for k in TOOL_KW):
                     tool_cnt += 1
                     continue
                 kept.append(r0)
-            rows = kept
+            if do_filter:
+                rows = kept
             LAST_ROWS[chat_id] = rows
             if auto_turn:
                 tg = turn_targets_from_rows(rows)
@@ -473,7 +485,7 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
                 h2.append(u)
             # —— 真测筛选：只留有活节点的（最多验 8 条，样本 4 节点/条）
             verified, dropped = [], 0
-            if h2:
+            if h2 and SET.get('verify_harvest', False):
                 try:
                     import concurrent.futures as _cf3
 
@@ -519,9 +531,7 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
                     verified = h2[:8]
             if verified:
                 h2 = verified
-                HARVEST_DUP[chat_id] = dup_same
-            else:
-                HARVEST_DUP[chat_id] = dup_same
+            HARVEST_DUP[chat_id] = dup_same
             HARVEST[chat_id] = h2
             HARVEST_DEAD[chat_id] = dropped
 
@@ -1166,6 +1176,16 @@ def handle_callback(cb):
         show(HELP, main_menu())
         return
 
+    if cmd == 'cfg':                     # 开关
+        k = parts[1]
+        SET[k] = not bool(SET.get(k, False))
+        save_settings(SET)
+        label = '工具站过滤' if k == 'filter_tool' else '真测筛选'
+        show('%s：%s\n当前：%s' % (label, '开' if SET[k] else '关', _mode_hint()),
+             [[_toggle('🧰 工具站过滤', 'filter_tool'), _toggle('🔬 真测筛选', 'verify_harvest')],
+              [btn('↩️ 返回', 'm|main')]])
+        return
+
     if cmd == 'pt':                      # 巡检 / 死链清理
         if parts[1] == 'clean':
             dead = []
@@ -1370,14 +1390,17 @@ def handle_callback(cb):
         if eng == 'fofa':
             kb = [[btn(lb, f's|fofa|{i}')] for i, (lb, _q) in enumerate(presets)]
             kb.append([btn('✏️ 自定义语句', 's2|fofa'), btn('📊 上次收割', 'hv|go')])
+            kb.append([_toggle('🧰 工具站过滤', 'filter_tool'), _toggle('🔬 真测筛选', 'verify_harvest')])
             kb.append([btn('↩️ 主菜单', 'm|main')])
             show('🔍 FOFA 一键搜索\n点一下直接出结果\n'
-                 '（代理平台 100 次/天 · 30 次/分）', kb)
+                 '（代理平台 100 次/天 · 30 次/分）\n'
+                 '当前：' + _mode_hint(), kb)
             return
         kb = [[btn(lb, f's|quake|{i}')] for i, (lb, _q) in enumerate(presets)]
         kb.append([btn('✏️ 自定义语句', 's2|quake')])
+        kb.append([_toggle('🧰 工具站过滤', 'filter_tool'), _toggle('🔬 真测筛选', 'verify_harvest')])
         kb.append([btn('↩️ 主菜单', 'm|main')])
-        show('🌐 Quake 一键搜索\n点一下直接出结果', kb)
+        show('🌐 Quake 一键搜索\n点一下直接出结果\n当前：' + _mode_hint(), kb)
         return
 
     if cmd == 's2':                      # 自定义语句
