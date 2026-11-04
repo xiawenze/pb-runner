@@ -382,6 +382,7 @@ def detail_view(chat_id, kind, idx):
         [btn('⭐ 取消收藏' if v.get('fav') else '☆ 收藏', f'v|{kind}|{idx}'),
          btn('✏️ 重命名', f'n|{kind}|{idx}')],
         [btn('🔗 转短链', f'k2|{kind}|{idx}'), btn('🗑 删除', f'x|{kind}|{idx}')],
+        [btn('📤 活节点YAML', f'an|{kind}|{idx}')],
         [btn('↩️ 返回列表', f'{kind}|list|0')],
     ]
     return '\n'.join(lines), kb
@@ -1259,6 +1260,58 @@ def handle_callback(cb):
               [btn('↩️ 返回', 'm|main')]])
         return
 
+    if cmd == 'an':                      # 导出活节点 YAML
+        urls = LIST_SNAP.get(chat_id) or []
+        idx2 = int(parts[2]) if len(parts) > 2 else 0
+        if idx2 >= len(urls):
+            show('该条已失效，回列表刷新一下。', [[btn('↩️ 返回', 'l|list|0')]])
+            return
+        u2 = urls[idx2]
+        show('📤 拉取 + 真测中（约 1-2 分钟）…')
+
+        def _exp():
+            try:
+                text, _ui, _m = subman.fetch_sub(u2)
+                if not text:
+                    edit(chat_id, mid, '❌ 拉取失败')
+                    return
+                rr = parse_subscription(text)
+                nodes = rr[0] if isinstance(rr, tuple) else rr
+                ok_nodes = [n for n in nodes if n.get('type') in realtest.OK_TYPES][:120]
+                if not ok_nodes:
+                    edit(chat_id, mid, '❌ 没有可测节点')
+                    return
+                pool = []
+                for i, n in enumerate(ok_nodes):
+                    n2 = dict(n)
+                    n2['name'] = 'a%03d' % i
+                    n2.setdefault('skip-cert-verify', True)
+                    pool.append((n2, n))
+                real, _info = realtest.test_nodes([x[0] for x in pool], sample=None, ready_wait=200)
+                alive = [orig for p, orig in pool if (real or {}).get(p['name'])]
+                if not alive:
+                    edit(chat_id, mid, '💀 全死，没有可导的节点',
+                         [[btn('🧹 死链清理', 'pt|clean')], [btn('↩️ 返回', 'm|main')]])
+                    return
+                import yaml as _yaml
+                doc = {'proxies': alive,
+                       'proxy-groups': [{'name': '活节点', 'type': 'url-test',
+                                         'proxies': [n['name'] for n in alive],
+                                         'url': 'http://www.gstatic.com/generate_204',
+                                         'interval': 300}]}
+                data = _yaml.safe_dump(doc, allow_unicode=True, sort_keys=False)
+                edit(chat_id, mid, '✅ 活 %d/%d，文件马上到' % (len(alive), len(ok_nodes)))
+                send_doc(chat_id, 'alive_%d_%d.yaml' % (int(time.time()), len(alive)), data,
+                         caption='活 %d/%d 节点（真握手验证）' % (len(alive), len(ok_nodes)))
+            except Exception as e:
+                try:
+                    edit(chat_id, mid, '❌ 导出异常: %s' % str(e)[:120])
+                except Exception:
+                    pass
+
+        threading.Thread(target=_exp, daemon=True).start()
+        return
+
     if cmd == 'pt':                      # 巡检 / 死链清理
         if parts[1] == 'clean':
             dead = []
@@ -1470,7 +1523,19 @@ def handle_callback(cb):
             kb.append([btn('✏️ 自定义语句', 's2|fofa'), btn('📊 上次收割', 'hv|go')])
             kb.append([_toggle('🧰 工具站过滤', 'filter_tool'), _toggle('🔬 真测筛选', 'verify_harvest')])
             kb.append([btn('↩️ 主菜单', 'm|main')])
-            show('🔍 FOFA 一键搜索\n点一下直接出结果\n'
+            quota = ''
+            try:
+                rq = requests.get('https://fofa.xiaomochen.tech/api/v1/info/my',
+                                  headers={'Authorization': 'Bearer ' + FOFA_PROXY_KEY,
+                                           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                                                         'AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'},
+                                  timeout=8, verify=False)
+                jq = rq.json()
+                quota = '\n📊 今日剩 %s/%s 次（连挖一次用 4 次）' % (
+                    jq.get('dailyRemaining'), jq.get('dailyLimit'))
+            except Exception:
+                pass
+            show('🔍 FOFA 一键搜索\n点一下直接出结果' + quota + '\n'
                  '（代理平台 100 次/天 · 30 次/分）\n'
                  '当前：' + _mode_hint(), kb)
             return
@@ -1837,6 +1902,28 @@ def main():
         print('[cmd] setMyCommands', 'ok' if r else 'fail', flush=True)
     except Exception as _e:
         print('[cmd] setMyCommands 失败', _e, flush=True)
+    def _auto_patrol():
+        try:
+            time.sleep(25)
+            if time.time() - float(SET.get('last_patrol') or 0) < 20 * 3600:
+                return
+            urls = STORE.urls()
+            if not urls:
+                return
+            SET['last_patrol'] = int(time.time())
+            save_settings(SET)
+            for uid in list(ALLOWED_USERS)[:3]:
+                try:
+                    msg = send(int(uid), '🩺 每日自动巡检开始…')
+                    threading.Thread(target=_patrol_run,
+                                     args=(int(uid), (msg or {}).get('message_id'), urls),
+                                     daemon=True).start()
+                except Exception:
+                    pass
+        except Exception as e:
+            print('[autopatrol]', e, flush=True)
+
+    threading.Thread(target=_auto_patrol, daemon=True).start()
     me = api('getMe', {})
     if me:
         print(f'[panghubot] 已上线: @{me.get("username")} ({me.get("id")})', flush=True)
