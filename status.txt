@@ -1,3 +1,15 @@
-RUNNING bot 启动中
-2026-11-04T14:12:19Z
+RUNNING pid=2453 重启=0 剩余=324min
+--- bot.log 尾 ---
+18
+[poll] 14:14:40 offset=271854719
+[poll] 14:14:44 offset=271854720
+[poll] 14:14:46 offset=271854721
+[poll] 14:14:49 offset=271854722
+[poll] 14:14:52 offset=271854723
+[poll] 14:14:54 offset=271854724
+[poll] 14:14:56 offset=271854725
+[poll] 14:15:08 offset=271854726
+[poll] 14:15:19 offset=271854727
+
+2026-11-04T14:17:30Z
 run=41844822291
