@@ -417,8 +417,15 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
                     f'查询: {q}\n'
                     f'总计: {res["total"]} · 本次导出: {len(lines)} 条\n'
                     f'domain: 无 · 屏蔽词过滤: {len(blockwords)} 个')
-            send_doc(chat_id, fname, head + '\n\n' + body,
-                     caption=f'{engine.upper()} 完成 · {len(lines)}/{res["total"]} 条', reply_to=reply_to)
+            print('[search] %s q=%s rows=%d total=%s harvest=%d'
+                  % (engine, q[:60], len(lines), res.get('total'), len(h2)), flush=True)
+            try:
+                send_doc(chat_id, fname, head + '\n\n' + body,
+                         caption=f'{engine.upper()} 完成 · {len(lines)}/{res["total"]} 条',
+                         reply_to=reply_to)
+            except Exception as de:
+                print('[search] sendDoc 失败', de, flush=True)
+                send(chat_id, '⚠️ 结果文件发送失败: %s' % str(de)[:120])
 
             kb = []
             if h2:
@@ -433,6 +440,7 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
                  keyboard=kb)
         except Exception as e:
             msg = str(e)[:300]
+            print('[search] FAIL %s %s' % (engine, msg), flush=True)
             send(chat_id, f'❌ {engine.upper()} 搜索失败:\n{msg}')
         finally:
             with JOBS_LOCK:
