@@ -174,6 +174,7 @@ HELP = (
     '⚙️ XWZ 专用 · FOFA 代理 + Quake 双引擎 + mihomo 真测'
 )
 
+
 # ---------------------------------------------------------------- TG API
 def api(method, payload=None, files=None, timeout=70):
     url = f'{API_BASE}/bot{BOT_TOKEN}/{method}'
@@ -198,20 +199,49 @@ def api(method, payload=None, files=None, timeout=70):
     return None
 
 
-def send(chat_id, text, keyboard=None, reply_to=None):
-    payload = {'chat_id': chat_id, 'text': text[:4000]}
+def esc(t):
+    """HTML 转义：所有动态内容都必须过这层，否则 Telegram 会 400"""
+    return (str(t).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+
+
+def quote_block(text, expandable=True):
+    """长内容塞进折叠块，Telegram 会显示成可展开的引用框"""
+    tag = '<blockquote expandable>' if expandable else '<blockquote>'
+    return tag + esc(text) + '</blockquote>'
+
+
+# 折叠版帮助：正文塞进 <blockquote expandable>，聊天里自动收起来
+def help_html():
+    i = HELP.index('▍开锤')
+    return HELP[:i] + quote_block(HELP[i:])
+
+
+def send(chat_id, text, keyboard=None, reply_to=None, raw=False):
+    body = text if raw else esc(text)
+    payload = {'chat_id': chat_id, 'text': body[:4000], 'parse_mode': 'HTML'}
     if reply_to:
         payload['reply_to_message_id'] = reply_to
     if keyboard:
         payload['reply_markup'] = {'inline_keyboard': keyboard}
-    return api('sendMessage', payload)
+    r = api('sendMessage', payload)
+    if not r and not raw:
+        # 兜底：HTML 解析失败时退回纯文本，保证一定能发出去
+        payload.pop('parse_mode', None)
+        r = api('sendMessage', payload)
+    return r
 
 
-def edit(chat_id, msg_id, text, keyboard=None):
-    payload = {'chat_id': chat_id, 'message_id': msg_id, 'text': text[:4000]}
+def edit(chat_id, msg_id, text, keyboard=None, raw=False):
+    body = text if raw else esc(text)
+    payload = {'chat_id': chat_id, 'message_id': msg_id, 'text': body[:4000],
+               'parse_mode': 'HTML'}
     if keyboard:
         payload['reply_markup'] = {'inline_keyboard': keyboard}
-    return api('editMessageText', payload)
+    r = api('editMessageText', payload)
+    if not r and not raw:
+        payload.pop('parse_mode', None)
+        r = api('editMessageText', payload)
+    return r
 
 
 def send_doc(chat_id, filename, content, caption='', reply_to=None):
@@ -822,8 +852,8 @@ def _patrol_run(chat_id, mid, urls):
         body += '\n\n💀 死链 %d 条，可点「🧹 死链清理」' % len(dead)
     if mid:
         try:
-            edit(chat_id, mid, (head + '\n\n' + body)[:3900],
-                 [[btn('🧹 死链清理', 'pt|clean')], [btn('📋 订阅列表', 'l|list|0')]])
+            edit(chat_id, mid, head + '\n' + quote_block(body),
+                 [[btn('🧹 死链清理', 'pt|clean')], [btn('📋 订阅列表', 'l|list|0')]], raw=True)
         except Exception:
             pass
 
@@ -1197,13 +1227,18 @@ def handle_nodes_text(chat_id, text, msg_id=None):
         return
     NODES[chat_id] = nodes
     head = _fmt_stats(nodes, f'🧩 解析完成 · 来源 {fmt}')
+    preview = '\n'.join('%d. %s' % (i, n.get('name') or ('%s:%s' % (n.get('server'), n.get('port'))))
+                        for i, n in enumerate(nodes[:80], 1))
+    if len(nodes) > 80:
+        preview += '\n… 还有 %d 个' % (len(nodes) - 80)
+    head += '\n📜 节点清单（点开看）\n' + quote_block(preview)
     if dropped:
         head += '⚠️ 丢弃脏节点: ' + ', '.join(f'{k}×{v}' for k, v in dropped.items()) + '\n'
     head += '\n选一个格式导出，或先存进节点池。'
     if msg_id:
-        edit(chat_id, msg_id, head, nodes_kb())
+        edit(chat_id, msg_id, head, nodes_kb(), raw=True)
     else:
-        send(chat_id, head, nodes_kb())
+        send(chat_id, head, nodes_kb(), raw=True)
 
 
 def do_convert(chat_id, fmt, nodes=None, tag='sub'):
@@ -1255,11 +1290,11 @@ def handle_callback(cb):
         return
 
     if cmd == 'm' and parts[1] == 'main':
-        edit(chat_id, mid, HELP, main_menu())
+        edit(chat_id, mid, help_html(), main_menu(), raw=True)
         return
 
     if cmd == 'h' and parts[1] == 'help':
-        show(HELP, main_menu())
+        show(help_html(), main_menu())
         return
 
     if cmd == 'cfg':                     # 开关
@@ -1718,9 +1753,9 @@ def handle_message(m):
         cmd = text.split()[0].split('@')[0].lower()
         args = text[len(text.split()[0]):].strip()
         if cmd in ('/start', '/menu'):
-            send(chat_id, '🩸 主人，XWZ 控制台已就位\n点按钮或直接下命令\n\n' + HELP, main_menu())
+            send(chat_id, '🩸 主人，XWZ 控制台已就位\n' + help_html(), main_menu(), raw=True)
         elif cmd == '/help':
-            send(chat_id, HELP, main_menu())
+            send(chat_id, help_html(), main_menu(), raw=True)
         elif cmd in ('/fofa', '/quake'):
             engine = cmd[1:]
             if args:
