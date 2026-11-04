@@ -1,12 +1,3 @@
-RUNNING pid=2216 重启=0 剩余=324min
---- bot.log 尾 ---
-//urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
-  warnings.warn(
-[search] fofa q=body="/api/v1/client/subscribe?token=" rows=88 total=356 harvest=2
-[poll] 04:29:33 offset=271854615
-[poll] 04:29:41 offset=271854616
-[poll] 04:30:42 offset=271854617
-[poll] 04:30:49 offset=271854618
-
-2026-11-04T04:31:45Z
-run=41773113233
+STARTED
+2026-11-04T04:33:03Z
+run=41773848070
