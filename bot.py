@@ -581,7 +581,7 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
 
 
 def harvest_add(chat_id):
-    """把上次搜索收割到的链接批量入库并逐个查 userinfo"""
+    """把上次搜索收割到的链接批量入库 + 立即真测活"""
     urls = HARVEST.get(chat_id) or []
     if not urls:
         return '没有待收割的链接。', [[btn('↩️ 主菜单', 'm|main')]]
@@ -598,10 +598,44 @@ def harvest_add(chat_id):
     save_settings(SET)
     HARVEST.pop(chat_id, None)
     dup = HARVEST_DUP.pop(chat_id, 0)
+
+    def _bg(new_urls):
+        msg = send(chat_id, f'🔬 入库 {len(new_urls)} 条，正在真测活…')
+        mid = (msg or {}).get('message_id')
+        try:
+            res = realtest.verify_subs(new_urls, per_sub=4)
+        except Exception as e:
+            if mid:
+                edit(chat_id, mid, f'❌ 验活异常: {str(e)[:120]}')
+            return
+        lines, alive_n = [], 0
+        for u in new_urls:
+            r = res.get(u) or {}
+            nm = (STORE.get(u) or {}).get('name') or subman.host_of(u)
+            a, n = r.get('alive', 0), r.get('nodes', 0)
+            if a:
+                alive_n += 1
+                STORE.record(u, {'nodes': n, 'alive': a, 'best_ms': r.get('best'),
+                                 'checked': int(time.time())})
+                lines.append(f'✅ {nm[:22]} · {n}节点 · 活{a} · 最快{r.get("best")}ms')
+            else:
+                STORE.record(u, {'nodes': n, 'alive': 0, 'checked': int(time.time()),
+                                 'err': r.get('err') or '无活节点'})
+                lines.append(f'💀 {nm[:22]} · {n}节点 · 全死{r.get("err") and " (" + r["err"] + ")" or ""}')
+        head = f'🔬 验活完成：{alive_n}/{len(new_urls)} 条有活节点'
+        body = '\n'.join(lines[:10]) + ('\n…' if len(lines) > 10 else '')
+        if mid:
+            edit(chat_id, mid, (head + '\n\n' + body)[:3900],
+                 [[btn('📋 订阅列表', 'l|list|0'), btn('🧹 死链清理', 'pt|clean')],
+                  [btn('↩️ 主菜单', 'm|main')]])
+        else:
+            send(chat_id, (head + '\n\n' + body)[:3900])
+
+    threading.Thread(target=_bg, args=([u for u in urls if u in STORE.d],), daemon=True).start()
     return (f'✅ 已入库 {added} 条新机场\n'
-            f'🔁 跳过同机场旧端口 {dup} 条 · 已记 {len(roots)} 个机场到「已见库」\n'
-            f'点「更新所有」批量查流量和节点数。',
-            [[btn('🔄 更新所有', 'u|all')], [btn('↩️ 主菜单', 'm|main')]])
+            f'🔁 跳过同机场旧端口 {dup} 条 · 已记 {len(roots)} 个机场\n'
+            f'🔬 正在真测活，结果马上出…',
+            [[btn('📋 订阅列表', 'l|list|0')], [btn('↩️ 主菜单', 'm|main')]])
 
 
 # ---------------------------------------------------------------- 刷新/测活
