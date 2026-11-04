@@ -1,11 +1,7 @@
-RUNNING pid=2240 重启=0 剩余=258min
+RUNNING pid=2240 重启=0 剩余=253min
 --- bot.log 尾 ---
-st 'ma.mcrock.cv'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
+4/lib/python3.9/site-packages/urllib3/connectionpool.py:1097: InsecureRequestWarning: Unverified HTTPS request is being made to host '62.234.171.210'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
   warnings.warn(
-[poll] 06:35:09 offset=271854651
-[poll] 06:35:14 offset=271854652
-[poll] 06:35:21 offset=271854653
-[poll] 06:35:29 offset=271854654
 
-2026-11-04T06:35:38Z
+2026-11-04T06:40:44Z
 run=41778904240
