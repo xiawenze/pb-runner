@@ -31,7 +31,7 @@ def search(token, q, size=10, start=0):
             'host': str(it.get('hostname') or http.get('host') or it.get('ip') or ''),
             'title': str(http.get('title') or ''),
             'server': str(http.get('server') or svc.get('name') or ''),
-            'body': str(http.get('body') or http.get('html') or '')[:2000],
+            'body': str(http.get('body') or http.get('html') or '')[:120000],
         })
     total = (((j.get('meta') or {}).get('pagination') or {}).get('total')) or len(rows)
     return {'total': total, 'rows': rows}
