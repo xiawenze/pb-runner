@@ -1,8 +1,8 @@
-RUNNING pid=2224 重启=0 剩余=324min
+RUNNING pid=2224 重启=0 剩余=319min
 --- bot.log 尾 ---
-[cmd] setMyCommands ok
-[panghubot] 已上线: @xwzxxxbot (9092676255)
-[poll] 04:54:41 offset=271854625
+d Request: query is too old and response timeout expired or query ID is invalid
+[api] editMessageText fail: Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message
+[poll] 04:59:35 offset=271854633
 
-2026-11-04T04:54:41Z
+2026-11-04T04:59:47Z
 run=41775289224
