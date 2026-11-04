@@ -1,12 +1,15 @@
-RUNNING pid=2453 重启=0 剩余=313min
+RUNNING pid=2453 重启=0 剩余=308min
 --- bot.log 尾 ---
-sed. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
-  warnings.warn(
-[poll] 14:24:53 offset=271854732
-[search] FAIL fofa local variable 'q' referenced before assignment
-[poll] 14:24:57 offset=271854733
-[poll] 14:25:20 offset=271854734
+34
 [poll] 14:28:24 offset=271854735
+[poll] 14:28:30 offset=271854736
+[poll] 14:28:33 offset=271854737
+[poll] 14:28:38 offset=271854738
+[poll] 14:29:21 offset=271854739
+[poll] 14:29:25 offset=271854740
+[poll] 14:29:27 offset=271854741
+[poll] 14:29:31 offset=271854742
+[poll] 14:29:35 offset=271854743
 
-2026-11-04T14:28:27Z
+2026-11-04T14:33:42Z
 run=41844822291
