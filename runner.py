@@ -197,11 +197,33 @@ def download(name, dest):
     return False
 
 
-def upload(name, path):
+def upload(name, path, allow_empty=False):
     if not os.path.exists(path):
         return
+    # 空库保护：subs.json 内容为空对象时，禁止覆盖远端（防清库）
+    if name == 'subs.json' and not allow_empty:
+        try:
+            if not json.load(open(path, encoding='utf-8')):
+                log('!! 本地 subs.json 是空库，跳过上传（防清空远端）')
+                return
+        except Exception:
+            pass
     try:
         old = assets().get(name)
+        # 备份：覆盖 subs.json 前先把远端旧版存一份
+        if name == 'subs.json' and old:
+            try:
+                rr = SESSION.get(old['url'], headers={'Accept': 'application/octet-stream'},
+                                 timeout=30, allow_redirects=True)
+                if rr.status_code == 200 and rr.content:
+                    requests.post(f'{UP}/releases/{REL_ID}/assets',
+                                  params={'name': 'subs-backup-%d.json' % int(time.time() % 100000)},
+                                  headers={'Authorization': 'Bearer ' + TOKEN,
+                                           'Content-Type': 'application/octet-stream'},
+                                  data=rr.content, timeout=60)
+                    log('已备份旧 subs.json (%dB)' % len(rr.content))
+            except Exception:
+                pass
         if old:
             SESSION.delete(old['url'], timeout=25)
             time.sleep(1)
@@ -229,6 +251,17 @@ os.makedirs('data', exist_ok=True)
 for name in ('state.json', 'subs.json', 'nodepool.json', 'settings.json'):
     if download(name, 'data/' + name):
         log('载入', name)
+# 关键校验：远端有库但没下载成功 → 重试 3 次，仍失败就退出（防空库覆盖）
+if assets().get('subs.json') and not os.path.exists('data/subs.json'):
+    for i in range(3):
+        log('subs.json 下载失败，重试', i + 1)
+        if download('subs.json', 'data/subs.json'):
+            break
+        time.sleep(5)
+    if not os.path.exists('data/subs.json'):
+        report('FAIL subs.json 无法下载，本 run 退出保护远端库')
+        log('!! 退出：不能用空库起跑')
+        sys.exit(1)
 
 report('RUNNING bot 启动中')
 log('启动 bot')
@@ -281,7 +314,7 @@ log('bot 已停, 重启', restarts)
 for n in ('state', 'subs', 'nodepool', 'settings'):
     p = f'data/{n}.json'
     if os.path.exists(p):
-        upload(n + '.json', p)
+        upload(n + '.json', p, allow_empty=True)
 upload('bot.log', 'bot.log')
 upload('runner.log', 'runner.log')
 
