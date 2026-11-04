@@ -93,6 +93,24 @@ def save_settings(d):
 
 SET = load_settings()
 
+FOFA_PRESETS = [
+    ('📡 订阅端点+token', 'body="/api/v1/client/subscribe?token="'),
+    ('🛰 Sub-Store 后端', 'header="X-Powered-By: Sub-Store"'),
+    ('🧭 V2Board 面板', 'body="/api/v1/guest/comm/config"'),
+    ('🔮 MiSub 中台', 'body="/api/public/profiles"'),
+    ('📮 订阅落地页', 'body="订阅" && body="clash"'),
+    ('🛰 TURN/STUN', 'protocol="stun"'),
+    ('🔑 弱口令后台', 'body="password" && title="登录"'),
+    ('🌐 机场官网', 'title="机场" && body="订阅"'),
+]
+
+QUAKE_PRESETS = [
+    ('🧭 V2Board 面板', 'app:"v2board"'),
+    ('📡 订阅端点', 'body:"/api/v1/client/subscribe"'),
+    ('🛰 TURN/STUN', 'service:"stun"'),
+    ('🌐 Sub-Store', 'body:"Sub-Store"'),
+]
+
 HELP = (
     '🛰 PANGHU 订阅管家\n'
     '资产搜索 · 订阅管理 · 节点转换\n'
@@ -1179,12 +1197,36 @@ def handle_callback(cb):
         return
 
     if cmd == 's':                       # 搜索入口
-        WAITING[chat_id] = (parts[1], None)
-        tip = ('FOFA 语法示例:\n`domain="example.com"`\n`header="X-Powered-By: Sub-Store"`\n'
-               '`body="subscription-userinfo"`' if parts[1] == 'fofa' else
-               'Quake 语法示例:\n`domain: "example.com"`\n`title: "Sub-Store"`\n'
-               '`body: "subscription-userinfo"`')
-        show(f'🔍 发我 {parts[1].upper()} 查询语句\n\n{tip}',
+        eng = parts[1]
+        presets = FOFA_PRESETS if eng == 'fofa' else QUAKE_PRESETS
+        # 一键预设: s|fofa|3
+        if len(parts) >= 3 and parts[2].isdigit():
+            i = int(parts[2])
+            if 0 <= i < len(presets):
+                label, q = presets[i]
+                show(f'🔍 {eng.upper()} 搜索中…\n{label}\n{q[:120]}')
+                do_search(chat_id, eng, q)
+            return
+        # 预设菜单
+        if eng == 'fofa':
+            kb = [[btn(lb, f's|fofa|{i}')] for i, (lb, _q) in enumerate(presets)]
+            kb.append([btn('✏️ 自定义语句', 's2|fofa'), btn('📊 上次收割', 'hv|go')])
+            kb.append([btn('↩️ 主菜单', 'm|main')])
+            show('🔍 FOFA 一键搜索\n点一下直接出结果\n'
+                 '（代理平台 100 次/天 · 30 次/分）', kb)
+            return
+        kb = [[btn(lb, f's|quake|{i}')] for i, (lb, _q) in enumerate(presets)]
+        kb.append([btn('✏️ 自定义语句', 's2|quake')])
+        kb.append([btn('↩️ 主菜单', 'm|main')])
+        show('🌐 Quake 一键搜索\n点一下直接出结果', kb)
+        return
+
+    if cmd == 's2':                      # 自定义语句
+        WAITING[chat_id] = ('fofa' if parts[1] == 'fofa' else 'quake', None)
+        tip = ('示例:\nbody="/api/v1/client/subscribe?token="\n'
+               'header="X-Powered-By: Sub-Store"' if parts[1] == 'fofa' else
+               '示例:\napp:"v2board"\nbody:"subscription-userinfo"')
+        show(f'✏️ 发我 {parts[1].upper()} 查询语句\n\n{tip}',
              [[btn('↩️ 取消', 'm|main')]])
         return
 
