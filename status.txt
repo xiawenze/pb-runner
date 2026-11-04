@@ -1,6 +1,12 @@
-RUNNING pid=2509 重启=0 剩余=319min
+RUNNING pid=2509 重启=0 剩余=314min
 --- bot.log 尾 ---
-[panghubot] 已上线: @xwzxxxbot (9092676255)
+ge content and reply markup are exactly the same as a current content and reply markup of the message
+[poll] 02:31:17 offset=271854553
+[poll] 02:31:19 offset=271854554
+[poll] 02:31:52 offset=271854555
+[poll] 02:32:46 offset=271854556
+[poll] 02:32:52 offset=271854557
+[poll] 02:32:58 offset=271854558
 
-2026-11-04T02:30:52Z
+2026-11-04T02:35:59Z
 run=41759507205
