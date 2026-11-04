@@ -97,16 +97,16 @@ def save_settings(d):
 SET = load_settings()
 
 BOT_COMMANDS = [
-    ('start', '主菜单 / 全部按钮'),
-    ('fofa', 'FOFA 搜索（可带语句）'),
-    ('quake', 'Quake 搜索（可带语句）'),
-    ('list', '订阅列表'),
-    ('patrol', '全量巡检（真测活 + 死链）'),
-    ('clean', '死链清理'),
-    ('update', '更新所有订阅的流量/节点'),
-    ('export', '导出链接（全部/有额度/存活）'),
-    ('id', '查看 chat_id / user_id'),
-    ('help', '帮助'),
+    ('start', '控制台 / 全部武器'),
+    ('fofa', 'FOFA 开锤（可带语句）'),
+    ('quake', 'Quake 开锤（可带语句）'),
+    ('list', '军火库'),
+    ('patrol', '全库过筛（真测活 + 死链）'),
+    ('clean', '清死链'),
+    ('update', '刷新全库流量/节点'),
+    ('export', '导出链接'),
+    ('id', '查 chat_id'),
+    ('help', '说明书'),
 ]
 
 MULTI_FOFA = [
@@ -145,14 +145,14 @@ QUAKE_PRESETS = [
 ]
 
 HELP = (
-    '🛰 PANGHU 订阅管家\n'
-    '资产搜索 · 订阅管理 · 节点转换\n'
+    '🩸 XWZ 控制台\n'
+    '资产锤 · 订阅库 · 节点炉\n'
     '━━━━━━━━━━━━━━\n\n'
-    '▍搜索\n'
+    '▍开锤\n'
     '🔍 FOFA 搜索 — 发语句，结果导出 txt，顺手收割订阅\n'
     '🌐 Quake 搜索 — 360 鹰图视角，资产更全\n'
     '🛰 TURN 扫描 — TCPing → 协议识别 → 弱口令 → 中继验证\n\n'
-    '▍订阅\n'
+    '▍军火库\n'
     '📋 订阅列表 — 全部订阅，点进去刷新/测活/收藏/删除\n'
     '⏳ 临期列表 — 按到期排序，自动标剩几天\n'
     '⭐ 收藏列表 — 只留常看的\n'
@@ -160,18 +160,18 @@ HELP = (
     '🩺 全量巡检 — 逐条真测活 + 死链标记 + 临期提醒\n'
     '🧹 死链清理 — 一键删掉拉不动/全死的\n'
     '📤 导出链接 — 全部/收藏/有额度/存活 四种口径\n\n'
-    '▍工具\n'
+    '▍军械\n'
     '🧩 节点转换 — 任意节点/订阅/配置 → Clash/V2Ray/Sing-box/Surge/QX/Loon\n'
     '✂️ 短链管理 — is.gd / tinyurl\n'
     '🚫 屏蔽词表 — 命中词的行/节点不展示\n'
     '🔗 路径对应 — 名字 ↔ URL，聊天框打名字即回链\n'
     '🔀 排序设置 — 到期/流量/节点数/加入时间\n\n'
-    '▍直接发消息\n'
+    '▍直接下命令\n'
     '• 订阅链接（可多条）→ 自动入库 + 识别机场名 + 查流量\n'
     '• /fofa <语句>、/quake <语句>\n'
     '• 发别名 → 回对应 URL\n'
     '• 发节点/配置 → 直接转换\n\n'
-    '⚙️ TG_BOT_TOKEN / TG_ALLOWED_USERS / FOFA_PROXY_KEY / QUAKE_KEY'
+    '⚙️ XWZ 专用 · FOFA 代理 + Quake 双引擎 + mihomo 真测'
 )
 
 # ---------------------------------------------------------------- TG API
@@ -328,7 +328,7 @@ def list_view(chat_id, kind='l', page=0, sub=None):
         title = '📋 订阅列表'
 
     if not urls:
-        return f'{title}\n\n（空）', [[btn('➕ 添加订阅', 'l|add_hint')]] + [back_row()]
+        return f'{title}\n\n空库。\n发订阅链接，或点「🔍 FOFA 开锤」去井里舀。', [[btn('➕ 添加订阅', 'l|add_hint')], [btn('🔍 去开锤', 's|fofa')]] + [back_row()]
 
     PER = 8
     tp = max(1, (len(urls) + PER - 1) // PER)
@@ -410,7 +410,7 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False, queries=None):
                     send(chat_id, '❌ 未配置 Quake: 在 .env 里填 QUAKE_KEY')
                     return
 
-            send(chat_id, f'🔍 {engine.upper()} 搜索中…\n指纹 {len(qs)} 个'
+            send(chat_id, f'🔍 {engine.upper()} 开锤…\n指纹 {len(qs)} 个'
                           + ('' if len(qs) == 1 else '（连挖，稍等）'))
             rows, total_max, hit_hosts, errs = [], 0, set(), []
             for i, qq in enumerate(qs, 1):
@@ -430,7 +430,7 @@ def do_search(chat_id, engine, q, reply_to=None, auto_turn=False, queries=None):
                     hit_hosts.add(h0)
                     rows.append(r0)
                 if len(qs) > 1:
-                    send(chat_id, f'🔍 指纹 {i}/{len(qs)} 命中 {rr.get("total")} · 累计 {len(rows)} 台')
+                    send(chat_id, f'🔍 第 {i}/{len(qs)} 锤命中 {rr.get("total")} · 累计 {len(rows)} 台')
             if not rows:
                 send(chat_id, '❌ 全部指纹都没命中\n' + '\n'.join(errs[:3]))
                 return
@@ -640,7 +640,7 @@ def harvest_add(chat_id):
     dup = HARVEST_DUP.pop(chat_id, 0)
 
     def _bg(new_urls):
-        msg = send(chat_id, f'🔬 入库 {len(new_urls)} 条，正在真测活…')
+        msg = send(chat_id, f'🔬 入库 {len(new_urls)} 条，逐个点名验活…')
         mid = (msg or {}).get('message_id')
         try:
             res = realtest.verify_subs(new_urls, per_sub=4)
@@ -674,7 +674,7 @@ def harvest_add(chat_id):
             else:
                 STORE.record(u, dict(base, alive=0, err=r.get('err') or '无活节点'))
                 lines.append(f'💀 {nm[:20]} · {n}节点 · 全死{r.get("err") and " (" + r["err"] + ")" or ""}')
-        head = f'🔬 验活完成：{alive_n}/{len(new_urls)} 条有活节点'
+        head = f'🔬 点名结束：{alive_n}/{len(new_urls)} 条还能打'
         body = '\n'.join(lines[:10]) + ('\n…' if len(lines) > 10 else '')
         if mid:
             edit(chat_id, mid, (head + '\n\n' + body)[:3900],
@@ -1346,7 +1346,7 @@ def handle_callback(cb):
         if not urls:
             show('库是空的', main_menu())
             return
-        show('🩺 巡检开始 0/%d' % len(urls))
+        show('🩺 全库过筛 0/%d' % len(urls))
         threading.Thread(target=_patrol_run, args=(chat_id, mid, urls), daemon=True).start()
         return
 
@@ -1718,7 +1718,7 @@ def handle_message(m):
         cmd = text.split()[0].split('@')[0].lower()
         args = text[len(text.split()[0]):].strip()
         if cmd in ('/start', '/menu'):
-            send(chat_id, '👋 点下方按钮操作\n\n' + HELP, main_menu())
+            send(chat_id, '🩸 主人，XWZ 控制台已就位\n点按钮或直接下命令\n\n' + HELP, main_menu())
         elif cmd == '/help':
             send(chat_id, HELP, main_menu())
         elif cmd in ('/fofa', '/quake'):
