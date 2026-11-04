@@ -1,8 +1,8 @@
-RUNNING pid=2224 重启=0 剩余=304min
+RUNNING pid=2224 重启=0 剩余=299min
 --- bot.log 尾 ---
 urllib3/connectionpool.py:1097: InsecureRequestWarning: Unverified HTTPS request is being made to host 'lansecs.top'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
   warnings.warn(
 [poll] 05:11:52 offset=271854646
 
-2026-11-04T05:15:05Z
+2026-11-04T05:20:12Z
 run=41775289224
