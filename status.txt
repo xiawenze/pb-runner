@@ -1,11 +1,12 @@
-RUNNING pid=2248 重启=0 剩余=263min
+RUNNING pid=2248 重启=0 剩余=258min
 --- bot.log 尾 ---
-gram.org', port=443): Read timed out. (read timeout=70)
+out. (read timeout=70)
 [api] getUpdates err: HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=70)
 [poll] 01:14:02 offset=271854543
 [poll] 01:14:50 offset=271854544
 [poll] 01:15:23 offset=271854545
 [poll] 01:16:08 offset=271854546
+[poll] 02:06:32 offset=271854547
 
-2026-11-04T02:03:50Z
+2026-11-04T02:08:56Z
 run=41750375707
