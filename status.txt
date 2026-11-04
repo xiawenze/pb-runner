@@ -1,6 +1,12 @@
-RUNNING pid=2248 重启=0 剩余=319min
+RUNNING pid=2248 重启=0 剩余=314min
 --- bot.log 尾 ---
-[panghubot] 已上线: @xwzxxxbot (9092676255)
+ Bad Gateway
+[api] getUpdates fail: Bad Gateway
+[api] getUpdates fail: Bad Gateway
+[api] getUpdates fail: Bad Gateway
+[api] getUpdates fail: Bad Gateway
+[api] getUpdates fail: Bad Gateway
+[api] getUpdates err: HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=70)
 
-2026-11-04T01:07:43Z
+2026-11-04T01:12:49Z
 run=41750375707
