@@ -1,7 +1,7 @@
-RUNNING pid=2311 重启=0 剩余=303min
+RUNNING pid=2311 重启=0 剩余=298min
 --- bot.log 尾 ---
 [cmd] setMyCommands ok
 [panghubot] 已上线: @xwzxxxbot (9092676255)
 
-2026-11-04T12:55:49Z
+2026-11-04T13:01:04Z
 run=41829384033
