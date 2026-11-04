@@ -18,7 +18,8 @@ BROWSER_UA = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.3
 def _proxy_search(pkey, q, size, page, with_body):
     """索迹中转平台 (Bearer 平台密钥, 必须带浏览器 UA 否则 CF 1010)"""
     qbase64 = base64.b64encode(q.encode('utf-8')).decode()
-    fields = 'host,ip,port,title,server' + (',body' if with_body else '')
+    # 代理平台不接受 body 字段（会回 error:true 无错误码），正文由 bot 自己抓
+    fields = 'host,ip,port,title,server'
     params = {'qbase64': qbase64, 'size': min(int(size) or 100, 100),
               'page': page, 'fields': fields}
     try:
@@ -29,8 +30,15 @@ def _proxy_search(pkey, q, size, page, with_body):
     except Exception as e:
         raise FofaError(f'网络错误: {type(e).__name__} {str(e)[:60]}')
     if j.get('error') in (True, 1) or j.get('code') in ('unauthorized', 'key_expired'):
-        raise FofaError(str(j.get('code') or j.get('msg') or 'platform error')[:120])
-    res = j.get('result') or []
+        code = str(j.get('code') or '')
+        if code in ('rate_limited', 'concurrency_limited', 'client_concurrency_limited'):
+            raise FofaError('平台限流（30 次/分），等一会儿再点')
+        if code in ('daily_quota_exhausted', 'quota_exhausted'):
+            raise FofaError('今日额度用完（100 次/天）')
+        if code in ('unauthorized', 'key_expired'):
+            raise FofaError('代理平台 key 失效或被踢')
+        raise FofaError('平台拒绝：该查询可能含不支持的字段（如 body），或已达当天额度')
+    res = j.get('result') or j.get('results') or []
     names = [x.strip() for x in fields.split(',')]
     rows = []
     for item in res:
