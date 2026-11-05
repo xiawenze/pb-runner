@@ -1,9 +1,9 @@
-RUNNING pid=2494 重启=0 剩余=267min
+RUNNING pid=2494 重启=0 剩余=262min
 --- bot.log 尾 ---
 [cmd] setMyCommands ok
 [panghubot] 已上线: @xwzxxxbot (9092676255)
 [poll] 03:01:25 offset=271854763
 [poll] 03:01:42 offset=271854764
 
-2026-11-05T03:24:39Z
+2026-11-05T03:29:51Z
 run=41954621537
