@@ -1,7 +1,12 @@
-RUNNING pid=2494 重启=0 剩余=12min
+RUNNING pid=2494 重启=0 剩余=6min
 --- bot.log 尾 ---
-4/lib/python3.9/site-packages/urllib3/connectionpool.py:1097: InsecureRequestWarning: Unverified HTTPS request is being made to host 'www.582134.xyz'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
+cate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
   warnings.warn(
+[poll] 07:43:06 offset=271854768
+[poll] 07:43:14 offset=271854769
+[poll] 07:43:20 offset=271854770
+[poll] 07:43:23 offset=271854771
+[poll] 07:43:27 offset=271854772
 
-2026-11-05T07:40:21Z
+2026-11-05T07:45:33Z
 run=41954621537
