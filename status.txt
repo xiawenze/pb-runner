@@ -1,4 +1,4 @@
-RUNNING pid=2494 重启=0 剩余=6min
+RUNNING pid=2494 重启=0 剩余=1min
 --- bot.log 尾 ---
 cate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
   warnings.warn(
@@ -8,5 +8,5 @@ cate verification is strongly advised. See: https://urllib3.readthedocs.io/en/la
 [poll] 07:43:23 offset=271854771
 [poll] 07:43:27 offset=271854772
 
-2026-11-05T07:45:33Z
+2026-11-05T07:50:45Z
 run=41954621537
