@@ -12,6 +12,7 @@
 """
 import base64
 import json
+import threading
 import os
 import re
 import subprocess
@@ -262,6 +263,42 @@ if assets().get('subs.json') and not os.path.exists('data/subs.json'):
         report('FAIL subs.json 无法下载，本 run 退出保护远端库')
         log('!! 退出：不能用空库起跑')
         sys.exit(1)
+
+# ---------- 每日深度挖矿（距上次 >20h 才跑）----------
+def maybe_harvest():
+    try:
+        import json as _j
+        st = {}
+        if os.path.exists('data/harvest_state.json'):
+            try:
+                st = _j.load(open('data/harvest_state.json', encoding='utf-8'))
+            except Exception:
+                st = {}
+        if time.time() - float(st.get('last_run') or 0) < 20 * 3600:
+            log('挖矿：上次 %s，跳过' % time.strftime('%m-%d %H:%M', time.localtime(st.get('last_run') or 0)))
+            return
+        import harvest_daily as HD
+        log('挖矿：开始深度挖矿')
+        summary = HD.run({'quake_key': os.environ.get('QUAKE_KEY', '')}, log=log)
+        txt = HD.report_text(summary)
+        log('挖矿：%s' % txt.splitlines()[2] if len(txt.splitlines()) > 2 else 'done')
+        # 推给主人
+        for uid in os.environ.get('TG_ALLOWED_USERS', '').split(','):
+            uid = uid.strip()
+            if not uid:
+                continue
+            try:
+                requests.post('https://api.telegram.org/bot%s/sendMessage' % os.environ.get('TG_BOT_TOKEN', ''),
+                              json={'chat_id': int(uid), 'text': txt[:3900], 'parse_mode': 'HTML',
+                                    'disable_web_page_preview': True}, timeout=30)
+            except Exception as e:
+                log('挖矿：推送失败', e)
+        upload('harvest_state.json', 'data/harvest_state.json')
+    except Exception as e:
+        log('挖矿异常:', e)
+
+
+threading.Thread(target=maybe_harvest, daemon=True).start()
 
 report('RUNNING bot 启动中')
 log('启动 bot')
