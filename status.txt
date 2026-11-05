@@ -1,9 +1,7 @@
-RUNNING pid=2494 重启=0 剩余=17min
+RUNNING pid=2494 重启=0 剩余=12min
 --- bot.log 尾 ---
-[cmd] setMyCommands ok
-[panghubot] 已上线: @xwzxxxbot (9092676255)
-[poll] 03:01:25 offset=271854763
-[poll] 03:01:42 offset=271854764
+4/lib/python3.9/site-packages/urllib3/connectionpool.py:1097: InsecureRequestWarning: Unverified HTTPS request is being made to host 'www.582134.xyz'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
+  warnings.warn(
 
-2026-11-05T07:35:08Z
+2026-11-05T07:40:21Z
 run=41954621537
