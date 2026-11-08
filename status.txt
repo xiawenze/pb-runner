@@ -1,9 +1,8 @@
-RUNNING pid=2609 重启=0 剩余=76min
+RUNNING pid=2730 重启=0 剩余=86min
 --- bot.log 尾 ---
-
-[api] getUpdates fail: Bad Gateway
+Webhook to delete the webhook first
 [api] getUpdates fail: Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first
 [api] getUpdates fail: Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first
 
-2026-11-08T09:20:46Z
-run=42448804893
+2026-11-08T09:21:19Z
+run=42449505402
