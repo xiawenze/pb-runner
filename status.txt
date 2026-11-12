@@ -1,8 +1,8 @@
-RUNNING pid=2597 重启=0 剩余=154min
+RUNNING pid=2932 重启=0 剩余=139min
 --- bot.log 尾 ---
 Webhook to delete the webhook first
 [api] getUpdates fail: Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first
 [api] getUpdates fail: Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first
 
-2026-11-12T20:18:03Z
-run=43266772012
+2026-11-12T20:22:01Z
+run=43264856522
